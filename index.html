@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0B4F43">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="رتل">
 <title>رتل</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
@@ -164,6 +170,8 @@ body:not([data-tab=hifz]) .bar2{display:none}
 dl.kb{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;margin:0 0 10px;align-items:baseline}
 dl.kb dt{font-family:ui-monospace,monospace;font-weight:700;color:var(--emer);direction:ltr;text-align:start}
 dl.kb dd{margin:0}
+.chk{display:flex;gap:8px;align-items:center;margin:8px 0}.chk input{width:18px;height:18px;accent-color:var(--emer)}
+input[type=time]{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 10px;color:inherit;font:inherit}
 #toast{position:fixed;inset:auto 12px 96px 12px;margin:0 auto;max-width:420px;text-align:center;background:var(--ink);color:var(--page);padding:10px 16px;border-radius:12px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .25s;z-index:30}
 #toast.show{opacity:1}
 body:not([data-tab=hifz]) #toast{bottom:24px}
@@ -503,7 +511,16 @@ async function init(){
 const TX={};
 async function getAyahs(n){
   if(TX[n])return TX[n];
-  const j=await (await fetch(`https://api.alquran.cloud/v1/surah/${n}/quran-uthmani`)).json();
+  if(QALL)return TX[n]=QALL.filter(a=>a.s===n).map(a=>({n:a.n,w:a.t.split(' ')}));
+  let j;
+  try{
+    const r=await fetch(`https://api.alquran.cloud/v1/surah/${n}/quran-uthmani`);
+    if(!r.ok)throw new Error('http');
+    j=await r.json();
+  }catch(e){
+    const all=await loadAll();                       // المصحف اللي اتحمّل للعمل بدون إنترنت
+    return TX[n]=all.filter(a=>a.s===n).map(a=>({n:a.n,w:a.t.split(' ')}));
+  }
   TX[n]=j.data.ayahs.map(a=>{
     let w=a.text.split(' ');
     if(n!==1&&n!==9&&a.numberInSurah===1&&strip(w[0]).includes('بسم'))w=w.slice(4);
@@ -877,6 +894,7 @@ function renderStats(){
      <div class="goalrow"><label for="goalIn">عدد الآيات الجديدة كل يوم</label><input id="goalIn" type="number" min="1" max="100" value="${D.goal}"></div>
    </div>
    <div class="panel" id="syncBox">${syncHTML()}</div>
+   <div class="panel" id="remBox">${remHTML()}</div>
    <div class="panel">
      <h2>نسخة احتياطية</h2>
      <p class="hint">بياناتك محفوظة في المتصفح على الجهاز ده بس. صدّر نسخة احتياطية عشان ما تضيعش لو مسحت بيانات المتصفح أو غيرت الجهاز.</p>
@@ -1429,6 +1447,7 @@ function syncHTML(){
 }
 function drawSync(){
   const b=$('#syncBox');if(b)b.innerHTML=syncHTML();
+  const rb=$('#remBox');if(rb)rb.innerHTML=remHTML();
   const c=$('#cloudBtn');if(c){c.textContent=SYNC.status==='err'?'☁!':SYNC.user?'☁✓':'☁';c.title=SYNC.user?'الحساب والمزامنة (مسجّل الدخول)':'الحساب والمزامنة'}
 }
 function queueSync(){if(!SYNC.user||!window.RFB)return;clearTimeout(SYNC.timer);SYNC.timer=setTimeout(()=>doSync(),3000)}
@@ -1443,13 +1462,14 @@ async function doSync(manual){
     const res=await RFB.sync(remote=>{
       const merged=remote?mergeD(D,unpackD(remote)):D,blob=packD(merged);
       if(blob.length>950000){const er=new Error('big');er.code='too-big';throw er}
-      return{blob,merged};
+      return{blob,merged,rem:remStatus(merged)};
     });
     try{localStorage.setItem('rattil_uid',uid)}catch(e){}
     const nd=mergeD(D,res.merged),sig=packD(nd);   // بيشمل أي تعديل حصل أثناء المزامنة
     if(sig!==packD(D)){replaceD(nd);afterMerge()}
     if(sig!==res.blob)SYNC.again=true;
     SYNC.last=Date.now();SYNC.status='ok';
+    if(!SYNC.remDone){SYNC.remDone=true;refreshReminder()}
     if(manual)toast('تمت المزامنة ✓');
   }catch(e){
     SYNC.status='err';SYNC.msg=e&&e.code in SERR?SERR[e.code]:'تعذّرت المزامنة. حاول تاني بعد شوية.';
@@ -1468,12 +1488,129 @@ async function signOutNow(){
 }
 function wireAuth(){
   if(!window.RFB){SYNC.status='na';drawSync();return}
-  RFB.onUser(u=>{SYNC.user=u;SYNC.status=u?'syncing':'off';SYNC.msg='';drawSync();if(u)doSync()});
+  RFB.onUser(u=>{SYNC.user=u;SYNC.remDone=false;SYNC.status=u?'syncing':'off';SYNC.msg='';drawSync();if(u)doSync()});
 }
 window.addEventListener('rfb',wireAuth);if(window.RFB!==undefined)wireAuth();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)queueSync()});
 window.addEventListener('online',queueSync);
 $('#cloudBtn').onclick=()=>{tab('stats');setTimeout(()=>$('#syncBox')&&$('#syncBox').scrollIntoView({behavior:'smooth',block:'center'}),60)};
+
+/* ---------- المرحلة ٩: تثبيت التطبيق، العمل بدون إنترنت، وتذكير يومي ---------- */
+// ← ضع هنا المفتاح العام للإشعارات: Firebase Console > Project settings > Cloud Messaging > Web Push certificates > Key pair
+const VAPID_KEY='';
+const REMKEY='rattil_rem';
+let REM={on:false,time:'20:00',strict:false,tok:''};
+try{Object.assign(REM,JSON.parse(localStorage.getItem(REMKEY)||'{}'))}catch(e){}
+const saveREM=()=>{try{localStorage.setItem(REMKEY,JSON.stringify(REM))}catch(e){}};
+let SWREG=null,deferredInstall=null,remBusy=false,offBusy=false,remMsg='';
+const tzName=()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'Africa/Cairo'}catch(e){return 'Africa/Cairo'}};
+const isStandalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+const isIOS=()=>/iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const hasNotif=()=>typeof Notification!=='undefined';
+const swOk=()=>'serviceWorker' in navigator&&location.protocol!=='file:';
+if(swOk())navigator.serviceWorker.register('sw.js').then(r=>{SWREG=r;drawRem()}).catch(()=>{});
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;drawRem()});
+window.addEventListener('appinstalled',()=>{deferredInstall=null;toast('تم تثبيت التطبيق ✓');drawRem()});
+
+// اللي بيتبعت للسيرفر مع كل مزامنة: فتحت التطبيق النهارده؟ ذاكرت النهارده؟
+function remStatus(d){
+  const t=dk(),o={seen:t,tz:tzName()};
+  if(act(d.log[t]))o.last=t;
+  return o;
+}
+const remPayload=()=>({on:!!REM.on,time:REM.time||'20:00',strict:!!REM.strict,tz:tzName()});
+function drawRem(){const b=$('#remBox');if(b)b.innerHTML=remHTML()}
+function remHTML(){
+  const off=localStorage.getItem('rattil_off');
+  let inst;
+  if(isStandalone())inst='<p class="hint">التطبيق متثبّت على جهازك ✓</p>';
+  else if(deferredInstall)inst='<div class="row" style="margin-top:0"><button id="instBtn" class="primary">📲 ثبّت التطبيق</button></div>';
+  else if(isIOS())inst='<p class="hint">على الآيفون: اضغط زر المشاركة في سفاري واختار «إضافة إلى الشاشة الرئيسية». الإشعارات على الآيفون بتشتغل بعد التثبيت بس.</p>';
+  else inst='<p class="hint">لتثبيت التطبيق: من قايمة المتصفح اختار «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».</p>';
+  const offl=`<div class="row" style="margin-top:0"><button id="offBtn"${offBusy?' disabled':''}>${offBusy?'بحمّل…':'⬇ حمّل المصحف للعمل بدون إنترنت'}</button></div>
+    <p class="hint">${off?'المصحف متحمّل على جهازك ✓. ':''}النصوص والمراجعة والإحصائيات بتشتغل من غير إنترنت. الصوت والتعرف على الصوت والمزامنة محتاجين إنترنت.</p>`;
+  let rem;
+  if(!hasNotif())rem='<p class="hint">المتصفح ده مش بيدعم الإشعارات'+(isIOS()?' (على الآيفون ثبّت التطبيق الأول من «إضافة إلى الشاشة الرئيسية»).':'.')+'</p>';
+  else{
+    const perm=Notification.permission,need=!SYNC.user?'<p class="note">التذكير الذكي محتاج تسجيل دخول (من قسم الحساب والمزامنة فوق).</p>':'';
+    rem=`<label class="chk"><input type="checkbox" id="remOn"${REM.on?' checked':''}${remBusy?' disabled':''}> شغّل التذكير اليومي</label>
+      <div class="row" style="margin-top:0"><label for="remTime">وقت التذكير</label><input type="time" id="remTime" value="${esc(REM.time||'20:00')}"></div>
+      <label class="chk"><input type="checkbox" id="remStrict"${REM.strict?' checked':''}> ذكّرني حتى لو فتحت التطبيق ولسه ما ذاكرتش</label>
+      <div class="row"><button id="remTest">🔔 جرّب إشعار</button></div>
+      ${perm==='denied'?'<p class="note">الإشعارات متمنوعة لموقع رتل. فعّلها من إعدادات المتصفح (قفل العنوان ثم الإشعارات).</p>':''}
+      ${remMsg?`<p class="note">${esc(remMsg)}</p>`:''}${need}
+      <p class="hint">إزاي بيشتغل: السيرفر بيفحص في الوقت اللي تحدده، ولو ما ذاكرتش النهارده (ولا فتحت التطبيق لو مفعّل الخيار ده) بيبعتلك «حان وقت الحفظ». لو ذاكرت قبل الميعاد ما بيبعتش حاجة. ممكن يتأخر الإشعار لحد ١٥ دقيقة أو أكتر.</p>`;
+  }
+  return `<h2>التطبيق والعمل بدون إنترنت</h2>${inst}${offl}<h2 style="margin-top:14px">التذكير اليومي</h2>${rem}`;
+}
+async function doInstall(){
+  if(!deferredInstall)return;
+  deferredInstall.prompt();try{await deferredInstall.userChoice}catch(e){}
+  deferredInstall=null;drawRem();
+}
+async function downloadOffline(){
+  if(offBusy)return;offBusy=true;drawRem();
+  try{
+    if(swOk())await navigator.serviceWorker.ready;
+    await loadAll();await fetch('https://api.alquran.cloud/v1/surah');
+    try{localStorage.setItem('rattil_off',String(Date.now()))}catch(e){}
+    toast('اتحمّل المصحف كله ✓');
+  }catch(e){toast('تعذّر التحميل. تأكد من الإنترنت وحاول تاني.')}
+  offBusy=false;drawRem();
+}
+async function testNotif(){
+  try{
+    if(!hasNotif()||!swOk())throw 0;
+    if(Notification.permission==='default')await Notification.requestPermission();
+    if(Notification.permission!=='granted'){toast('لازم تسمح بالإشعارات أولًا');drawRem();return}
+    const reg=SWREG||await navigator.serviceWorker.ready;
+    await reg.showNotification('رتل — تجربة',{body:'لو شفت الإشعار ده يبقى الإشعارات شغالة على جهازك ✓',icon:'icon-192.png',badge:'icon-192.png',dir:'rtl',lang:'ar',tag:'rattil-test'});
+  }catch(e){toast('الإشعارات مش متاحة هنا (محتاج https والتطبيق شغال من رابط جيت هاب)')}
+  drawRem();
+}
+const RERR={'messaging/permission-blocked':'الإشعارات متمنوعة من إعدادات المتصفح.','messaging/token-subscribe-failed':'فشل تسجيل الجهاز للإشعارات. اتأكد إن مفتاح VAPID صح وإن Firebase Cloud Messaging API مفعّل.','messaging/failed-service-worker-registration':'ملف sw.js مش موجود جنب index.html.','messaging/unsupported-browser':'المتصفح ده مش بيدعم الإشعارات.'};
+async function remToggle(on){
+  if(remBusy)return;remBusy=true;remMsg='';drawRem();
+  try{
+    if(on){
+      if(!SYNC.user)throw{m:'سجّل الدخول الأول من قسم الحساب والمزامنة.'};
+      if(!window.RFB||!RFB.push)throw{m:'المتصفح ده مش بيدعم الإشعارات من السيرفر.'};
+      if(!VAPID_KEY)throw{m:'مفتاح الإشعارات (VAPID_KEY) لسه ما اتضافش في ملف index.html. شوف ملف SETUP.'};
+      if(!swOk())throw{m:'الإشعارات بتشتغل من رابط جيت هاب (https) بس.'};
+      const reg=SWREG||await navigator.serviceWorker.ready;
+      if(await Notification.requestPermission()!=='granted')throw{m:'لازم تسمح بالإشعارات من المتصفح.'};
+      const tok=await RFB.push.getToken(VAPID_KEY,reg);
+      REM.on=true;REM.tok=tok;saveREM();
+      await RFB.setRem(remPayload());await RFB.addToken(tok);
+      toast('تم تشغيل التذكير اليومي ✓');
+    }else{
+      REM.on=false;saveREM();
+      if(SYNC.user&&window.RFB)await RFB.setRem({on:false});
+      toast('تم إيقاف التذكير');
+    }
+  }catch(e){remMsg=(e&&e.m)||RERR[e&&e.code]||('تعذّر تشغيل الإشعارات'+(e&&e.code?` (${e.code})`:'')+'. جرّب تاني.')}
+  remBusy=false;drawRem();
+}
+// بعد تسجيل الدخول: بنجدد توكن الجهاز ونرفع إعدادات التذكير للحساب
+async function refreshReminder(){
+  try{
+    if(!REM.on||!SYNC.user||!window.RFB||!RFB.push||!VAPID_KEY||!hasNotif()||Notification.permission!=='granted'||!swOk())return;
+    const reg=SWREG||await navigator.serviceWorker.ready,tok=await RFB.push.getToken(VAPID_KEY,reg);
+    REM.tok=tok;saveREM();await RFB.setRem(remPayload());await RFB.addToken(tok);
+  }catch(e){}
+}
+function pushRem(){
+  if(REM.on&&SYNC.user&&window.RFB)RFB.setRem(remPayload()).then(()=>toast('تم حفظ الإعداد ✓')).catch(()=>toast('تعذّر حفظ الإعداد'));
+}
+document.addEventListener('click',e=>{
+  const g=id=>e.target.closest(id);
+  if(g('#instBtn'))doInstall();else if(g('#offBtn'))downloadOffline();else if(g('#remTest'))testNotif();
+});
+document.addEventListener('change',e=>{
+  if(e.target.id==='remOn')remToggle(e.target.checked);
+  else if(e.target.id==='remTime'){REM.time=e.target.value||'20:00';saveREM();pushRem()}
+  else if(e.target.id==='remStrict'){REM.strict=e.target.checked;saveREM();pushRem()}
+});
 
 init();
 </script>
@@ -1492,18 +1629,30 @@ init();
       appId:"1:47778540012:web:8719c3e81e3e7dbc0438c9"
     });
     const auth=A.getAuth(app),db=F.getFirestore(app);auth.languageCode='ar';
+    const ref=()=>F.doc(db,'users',auth.currentUser.uid);
     window.RFB={
       onUser:cb=>A.onAuthStateChanged(auth,cb),
       signIn:()=>A.signInWithPopup(auth,new A.GoogleAuthProvider()),
       signOut:()=>A.signOut(auth),
       // قراءة ودمج وكتابة في عملية واحدة عشان جهازين ما يمسحوش تعديلات بعض
       sync:fn=>F.runTransaction(db,async tx=>{
-        const ref=F.doc(db,'users',auth.currentUser.uid),snap=await tx.get(ref);
+        const r=ref(),snap=await tx.get(r);
         const out=fn(snap.exists()?snap.data().blob:null);
-        tx.set(ref,{blob:out.blob,updated:Date.now(),app:'rattil'});
+        tx.set(r,{blob:out.blob,updated:Date.now(),app:'rattil',...(out.rem?{rem:out.rem}:{})},{merge:true});
         return out;
-      })
+      }),
+      // إعدادات التذكير (الوقت، تشغيل/إيقاف) وتوكنات الأجهزة في نفس مستند المستخدم
+      setRem:o=>F.setDoc(ref(),{rem:o},{merge:true}),
+      addToken:tok=>F.runTransaction(db,async tx=>{
+        const r=ref(),s=await tx.get(r),cur=(s.exists()&&s.data().rem&&s.data().rem.tokens)||[];
+        if(!cur.includes(tok))tx.set(r,{rem:{tokens:[...cur,tok].slice(-8)}},{merge:true});
+      }),
+      push:null
     };
+    try{
+      const Msg=await import(B+'firebase-messaging.js');
+      if(await Msg.isSupported()){const m=Msg.getMessaging(app);window.RFB.push={getToken:(k,reg)=>Msg.getToken(m,{vapidKey:k,serviceWorkerRegistration:reg})}}
+    }catch(e){console.warn('messaging unavailable',e)}
   }catch(e){console.warn('Firebase unavailable',e);window.RFB=null}
   window.dispatchEvent(new Event('rfb'));
 })();

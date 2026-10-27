@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0B4F43">
 <link rel="manifest" href="manifest.webmanifest">
+<script src="config.js"></script>
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
@@ -483,12 +484,21 @@ function refreshStrip(){
 }
 
 /* ---------- التنقل بين الأقسام ---------- */
+// بيحدّث علامات «محفوظة» و«محتاجة إعادة حفظ» من غير ما يعيد رسم الصفحة (بعد المراجعة أو الاختبار أو المزامنة)
+function refreshMarks(){
+  if(!ayahs.length)return;
+  const s=+$('#surah').value;
+  document.querySelectorAll('.ay').forEach(a=>{const e=D.ayat[s+':'+a.dataset.n];a.classList.toggle('done',!!e);a.classList.toggle('rl',!!(e&&e.w))});
+  if($('#pbar'))progress();
+  updBar();
+}
 function tab(n){
   if(n!=='hifz')stop();
   if(n!=='test'&&typeof TS!=='undefined'&&TS.listen){try{TS.sr.r.abort()}catch(e){}TS.listen=false;TS.sr=null}
   document.body.dataset.tab=n;
   ['hifz','review','test','stats','surahs','juz'].forEach(x=>{$('#tab-'+x).hidden=x!==n});
   document.querySelectorAll('.tabs button').forEach(b=>{const on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on)});
+  if(n==='hifz')refreshMarks();
   if(n==='review')renderReview();else if(n==='test')renderTest();else if(n==='stats')renderStats();else if(n==='surahs')renderSurahs();else if(n==='juz')renderJuz();
   window.scrollTo(0,0);
 }
@@ -753,7 +763,7 @@ async function vfyHTML(s,n,o){
   return `<div class="vsc ${verdict[0]==='cl'?'':verdict[0]}">تطابق ${toAr(score)}٪ — ${verdict[1]}</div>
     <p class="vw">${words}</p>
     <div class="vlg"><span class="ok">■ صح</span><span class="cl">■ قريبة</span><span class="bd">■ كلمة مختلفة</span><span class="ms">■ ناقصة</span></div>
-    <p class="note">اللي سمعه البرنامج من صوتك: «${heard}»${extra.length?` — كلمات زيادة: ${extra.length}`:''}</p>
+    <p class="note">اللي سمعه البرنامج من صوتك: «${esc(heard)}»${extra.length?` — كلمات زيادة: ${extra.length}`:''}</p>
     <p class="note">ده تعرّف تلقائي على الكلمات بس، مش تصحيح تجويد. لو كلمة طلعت حمرا وأنت متأكد إنك قلتها صح، ممكن البرنامج هو اللي ما فهمهاش، فاسمع تسجيلك وقارنه بالقارئ.</p>`;
 }
 function listening(title){
@@ -832,12 +842,13 @@ try{const rc=localStorage.getItem('hifzReciter');if(rc&&[...$('#reciter').option
 $('#reciter').onchange=()=>{try{localStorage.setItem('hifzReciter',$('#reciter').value)}catch(e){}};
 
 /* ---------- حساب وقت المذاكرة ---------- */
-let lastAct=Date.now();
+let lastAct=Date.now(),SECDIRTY=false;   // SECDIRTY: وقت الاستخدام اتغيّر محليًا ولسه ما اتبعتش للسحابة
 ['pointerdown','keydown','scroll','touchstart'].forEach(ev=>addEventListener(ev,()=>{lastAct=Date.now()},{passive:true}));
 setInterval(()=>{
   if(document.hidden)return;
   if(Date.now()-lastAct>60000&&audio.paused)return;   // مفيش نشاط
-  day(dk()).sec+=10;saveD();refreshStrip();
+  day(dk()).sec+=10;SECDIRTY=true;try{localStorage.setItem(KEY,JSON.stringify(D))}catch(e){}   // حفظ محلي بس، من غير مزامنة كل ١٠ ثواني
+  refreshStrip();
 },10000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){lastAct=Date.now();refreshStrip()}});
 
@@ -1186,7 +1197,7 @@ async function renderTest(){
     :btn('f','غلطت',plan(e.b||0,'f').days)+btn('g','صح',plan(e.b||0,TS.hint?'h':'g').days);
   let ans;
   if(TS.listen)ans='<p class="rvtxt" id="live" style="font-size:1.4rem;text-align:center">…</p>';
-  else if(TS.shown&&vr)ans=`<div class="vsc ${vr.score>=VPASS?'up':'dn'}">تطابق ${toAr(vr.score)}٪ — ${vr.score>=VPASS?'صح ✓':'غلطت ✗'}</div><p class="vw">${vr.E.map((w,i)=>`<span class="${vr.res[i]}">${w}</span>`).join(' ')}</p>${VLEG}<p class="note">اللي سمعه البرنامج من صوتك: «${vr.heard}»</p>`;
+  else if(TS.shown&&vr)ans=`<div class="vsc ${vr.score>=VPASS?'up':'dn'}">تطابق ${toAr(vr.score)}٪ — ${vr.score>=VPASS?'صح ✓':'غلطت ✗'}</div><p class="vw">${vr.E.map((w,i)=>`<span class="${vr.res[i]}">${w}</span>`).join(' ')}</p>${VLEG}<p class="note">اللي سمعه البرنامج من صوتك: «${esc(vr.heard)}»</p>`;
   else if(TS.shown)ans=`<div class="rvtxt">${W.join(' ')}</div>`;
   else if(verr)ans=`<div class="rvhide">${VERR[verr]||VERR.none}</div>`;
   else if(TS.hint)ans=`<div class="rvtxt">${tw} …</div>`;
@@ -1469,7 +1480,7 @@ async function doSync(manual){
     const nd=mergeD(D,res.merged),sig=packD(nd);   // بيشمل أي تعديل حصل أثناء المزامنة
     if(sig!==packD(D)){replaceD(nd);afterMerge()}
     if(sig!==res.blob)SYNC.again=true;
-    SYNC.last=Date.now();SYNC.status='ok';
+    SECDIRTY=false;SYNC.last=Date.now();SYNC.status='ok';
     if(!SYNC.remDone){SYNC.remDone=true;refreshReminder()}
     if(manual)toast('تمت المزامنة ✓');
   }catch(e){
@@ -1492,13 +1503,14 @@ function wireAuth(){
   RFB.onUser(u=>{SYNC.user=u;SYNC.remDone=false;SYNC.status=u?'syncing':'off';SYNC.msg='';drawSync();if(u)doSync()});
 }
 window.addEventListener('rfb',wireAuth);if(window.RFB!==undefined)wireAuth();
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)queueSync()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden||SECDIRTY)queueSync()});
+setInterval(()=>{if(SECDIRTY&&SYNC.user)queueSync()},300000);   // وقت الاستخدام بيتبعت كل ٥ دقايق أو لما تقفل التبويب
 window.addEventListener('online',queueSync);
 $('#cloudBtn').onclick=()=>{tab('stats');setTimeout(()=>$('#syncBox')&&$('#syncBox').scrollIntoView({behavior:'smooth',block:'center'}),60)};
 
 /* ---------- المرحلة ٩: تثبيت التطبيق، العمل بدون إنترنت، وتذكير يومي ---------- */
 // ← ضع هنا المفتاح العام للإشعارات: Firebase Console > Project settings > Cloud Messaging > Web Push certificates > Key pair
-const VAPID_KEY='BOMCMWlnrvMM6jBMWGfA51rDSMBpVzOwvjIjFCLcfsC_OuPZ5BuPFiLJQCfkIYO5sQqmNJVDb0WUZ3mvK_2bO_Y';
+const VAPID_KEY=window.RATTIL_VAPID||'';   // بييجي من ملف config.js
 const REMKEY='rattil_rem';
 let REM={on:false,time:'20:00',strict:false,tok:''};
 try{Object.assign(REM,JSON.parse(localStorage.getItem(REMKEY)||'{}'))}catch(e){}
@@ -1542,7 +1554,7 @@ function remHTML(){
       <label class="chk"><input type="checkbox" id="remStrict"${REM.strict?' checked':''}> ذكّرني حتى لو فتحت التطبيق ولسه ما ذاكرتش</label>
       <div class="row"><button id="remTest">🔔 جرّب إشعار</button></div>
       ${perm==='denied'?'<p class="note">الإشعارات متمنوعة لموقع رتل. فعّلها من إعدادات المتصفح (قفل العنوان ثم الإشعارات).</p>':''}
-      ${remMsg?`<p class="note">${esc(remMsg)}</p>`:''}${need}
+      ${remMsg?`<p class="note">${esc(remMsg)}</p>`:''}${need}${REM.test?'<p class="note">🧪 وضع التجربة شغال: التطبيق مش بيبلّغ السيرفر بنشاطك. اقفله من زر التشخيص بعد ما تخلّص.</p>':''}
       <p class="hint">إزاي بيشتغل: السيرفر بيفحص في الوقت اللي تحدده، ولو ما ذاكرتش النهارده (ولا فتحت التطبيق لو مفعّل الخيار ده) بيبعتلك «حان وقت الحفظ». لو ذاكرت قبل الميعاد ما بيبعتش حاجة. ممكن يتأخر الإشعار لحد ١٥ دقيقة أو أكتر.</p>`;
   }
   return `<h2>التطبيق والعمل بدون إنترنت</h2>${inst}${offl}<h2 style="margin-top:14px">التذكير اليومي</h2>${rem}${diagUI()}`;
@@ -1579,7 +1591,7 @@ async function remToggle(on){
     if(on){
       if(!SYNC.user)throw{m:'سجّل الدخول الأول من قسم الحساب والمزامنة.'};
       if(!window.RFB||!RFB.push)throw{m:'المتصفح ده مش بيدعم الإشعارات من السيرفر.'};
-      if(!VAPID_KEY)throw{m:'مفتاح الإشعارات (VAPID_KEY) لسه ما اتضافش في ملف index.html. شوف ملف SETUP.'};
+      if(!VAPID_KEY)throw{m:'مفتاح الإشعارات (VAPID) مش موجود في ملف config.js. شوف ملف SETUP.'};
       if(!swOk())throw{m:'الإشعارات بتشتغل من رابط جيت هاب (https) بس.'};
       const reg=SWREG||await navigator.serviceWorker.ready;
       if(await Notification.requestPermission()!=='granted')throw{m:'لازم تسمح بالإشعارات من المتصفح.'};
@@ -1635,7 +1647,7 @@ async function diagnose(){
   ok(!!(reg&&reg.active),'ملف sw.js شغال','ملف sw.js مش شغال. اتأكد إنه مرفوع جنب index.html');
   ok(hasNotif(),'المتصفح بيدعم الإشعارات');
   L.push('ℹ️ إذن الإشعارات: '+(hasNotif()?Notification.permission:'مش متاح'));
-  ok(!!VAPID_KEY,'مفتاح VAPID موجود في الملف','مفتاح VAPID فاضي في index.html (const VAPID_KEY=\'\')');
+  ok(!!VAPID_KEY,'مفتاح VAPID موجود في الملف','مفتاح VAPID مش موجود في ملف config.js');
   ok(!!SYNC.user,'مسجّل الدخول: '+(SYNC.user?SYNC.user.email:''),'مش مسجّل الدخول');
   ok(!!(window.RFB&&RFB.push),'خدمة الإشعارات (FCM) متاحة في المتصفح','خدمة الإشعارات (FCM) مش متاحة في المتصفح ده');
   ok(!!REM.on,'التذكير شغال على الجهاز ده','التذكير مش مفعّل على الجهاز ده (الخانة مش متعلّم عليها)');
@@ -1647,6 +1659,11 @@ async function diagnose(){
     try{tok=await RFB.push.getToken(VAPID_KEY,reg);ok(!!tok,'اتجاب توكن للجهاز ('+String(tok).slice(0,12)+'…)')}
     catch(e){ok(false,'','فشل جلب توكن الجهاز: '+(e.code||e.message))}
   }
+  try{
+    const c=await caches.open('rattil-log'),lr=await c.match('push-log'),a=lr?await lr.json():[];
+    if(!a.length)L.push('❌ لسه ما وصل للجهاز ده أي إشعار من السيرفر (سجل الجهاز فاضي)');
+    else{L.push('ℹ️ آخر أحداث الإشعارات على الجهاز ده:');a.slice(-4).forEach(x=>L.push('   • '+new Date(x.t).toLocaleTimeString('ar-EG')+' — '+x.m))}
+  }catch(e){}
   if(SYNC.user&&window.RFB&&RFB.getRem){
     try{
       const r=await RFB.getRem();

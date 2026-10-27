@@ -1498,7 +1498,7 @@ $('#cloudBtn').onclick=()=>{tab('stats');setTimeout(()=>$('#syncBox')&&$('#syncB
 
 /* ---------- المرحلة ٩: تثبيت التطبيق، العمل بدون إنترنت، وتذكير يومي ---------- */
 // ← ضع هنا المفتاح العام للإشعارات: Firebase Console > Project settings > Cloud Messaging > Web Push certificates > Key pair
-const VAPID_KEY='BOMCMWlnrvMM6jBMWGfA51rDSMBpVzOwvjIjFCLcfsC_OuPZ5BuPFiLJQCfkIYO5sQqmNJVDb0WUZ3mvK_2bO_Y';
+const VAPID_KEY='';
 const REMKEY='rattil_rem';
 let REM={on:false,time:'20:00',strict:false,tok:''};
 try{Object.assign(REM,JSON.parse(localStorage.getItem(REMKEY)||'{}'))}catch(e){}
@@ -1514,9 +1514,12 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredIns
 window.addEventListener('appinstalled',()=>{deferredInstall=null;toast('تم تثبيت التطبيق ✓');drawRem()});
 
 // اللي بيتبعت للسيرفر مع كل مزامنة: فتحت التطبيق النهارده؟ ذاكرت النهارده؟
+// «ذاكرت» للتذكير = آيات جديدة أو مراجعة أو اختبار أو استماع. وقت فتح التطبيق لوحده مش مذاكرة.
+const studied=l=>!!l&&!failed(l)&&(l.nw>0||l.rv>0||l.ls>0||l.sn>0);
 function remStatus(d){
   const t=dk(),o={seen:t,tz:tzName()};
-  if(act(d.log[t]))o.last=t;
+  if(REM.test){o.seen='__del__';o.last='__del__';return o}   // وضع التجربة: ما نبلّغش السيرفر بأي نشاط
+  if(studied(d.log[t]))o.last=t;
   return o;
 }
 const remPayload=()=>({on:!!REM.on,time:REM.time||'20:00',strict:!!REM.strict,tz:tzName()});
@@ -1616,7 +1619,7 @@ document.addEventListener('change',e=>{
 // تشخيص: بيفحص كل حلقة في سلسلة الإشعارات ويقولك فين المشكلة
 let DIAG='';
 function diagUI(){
-  return `<div class="row"><button id="diagBtn">🩺 تشخيص الإشعارات</button>${DIAG?'<button id="diagCopy">نسخ النتيجة</button><button id="diagReset">↺ صفّر إرسال النهارده (للتجربة)</button>':''}</div>${DIAG?`<pre class="diag">${esc(DIAG)}</pre>`:''}`;
+  return `<div class="row"><button id="diagBtn">🩺 تشخيص الإشعارات</button>${DIAG?'<button id="diagCopy">نسخ النتيجة</button>'+(REM.test?'<button id="diagTestOff">إنهاء وضع التجربة</button>':'<button id="diagTest">🧪 جهّز تجربة</button>'):''}</div>${DIAG?`<pre class="diag">${esc(DIAG)}</pre>`:''}`;
 }
 function tzNow(tz){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(x=>[x.type,x.value]));
@@ -1636,6 +1639,9 @@ async function diagnose(){
   ok(!!SYNC.user,'مسجّل الدخول: '+(SYNC.user?SYNC.user.email:''),'مش مسجّل الدخول');
   ok(!!(window.RFB&&RFB.push),'خدمة الإشعارات (FCM) متاحة في المتصفح','خدمة الإشعارات (FCM) مش متاحة في المتصفح ده');
   ok(!!REM.on,'التذكير شغال على الجهاز ده','التذكير مش مفعّل على الجهاز ده (الخانة مش متعلّم عليها)');
+  const tl=D.log[dk()]||ZERO;
+  L.push(`ℹ️ نشاط النهارده على الجهاز ده: آيات جديدة ${tl.nw} | مراجعات ${tl.rv} | اختبارات ${tl.ts} | استماع ${tl.ls} | وقت استخدام ${tl.sec} ثانية (وقت الاستخدام لوحده ما بيتحسبش مذاكرة)`);
+  L.push(REM.test?'🧪 وضع التجربة شغال: التطبيق مش بيبلّغ السيرفر إنك ذاكرت أو فتحت. اقفله بعد التجربة.':'ℹ️ التطبيق بيبلّغ السيرفر إنك '+(studied(tl)?'ذاكرت النهارده':'لسه ما ذاكرتش النهارده'));
   let tok=null;
   if(window.RFB&&RFB.push&&VAPID_KEY&&reg&&hasNotif()&&Notification.permission==='granted'){
     try{tok=await RFB.push.getToken(VAPID_KEY,reg);ok(!!tok,'اتجاب توكن للجهاز ('+String(tok).slice(0,12)+'…)')}
@@ -1659,7 +1665,7 @@ async function diagnose(){
           if(r.on!==true)why='التذكير مش شغال';
           else if(!(n.mins>=t&&n.mins<t+120))why=`مش وقته: الوقت عندك دلوقتي ${n.txt} والميعاد ${r.time}، والسيرفر بيبعت من الميعاد لحد ساعتين بعده بس`;
           else if(r.sent===n.date)why='اتبعت إشعار النهارده بالفعل (استخدم زر تصفير الإرسال للتجربة)';
-          else if(r.last===n.date)why='السيرفر شايفك ذاكرت النهارده';
+          else if(r.last===n.date)why='السيرفر شايفك ذاكرت النهارده (آيات جديدة أو مراجعة أو اختبار أو استماع). لو ده من تجاربك استخدم زر «جهّز تجربة»';
           else if(!r.strict&&r.seen===n.date)why='السيرفر شايفك فتحت التطبيق النهارده. فعّل «ذكّرني حتى لو فتحت التطبيق»';
           else if(!toks.length)why='مفيش جهاز مسجّل';
           else why='';
@@ -1674,7 +1680,12 @@ document.addEventListener('click',e=>{
   const g=id=>e.target.closest(id);
   if(g('#diagBtn'))diagnose();
   else if(g('#diagCopy')){navigator.clipboard&&navigator.clipboard.writeText(DIAG).then(()=>toast('تم نسخ النتيجة ✓')).catch(()=>toast('تعذّر النسخ، حدّد النص وانسخه يدوي'))}
-  else if(g('#diagReset')&&window.RFB&&RFB.resetSent)RFB.resetSent().then(()=>{toast('تم تصفير إرسال النهارده ✓');diagnose()}).catch(()=>toast('تعذّر التصفير'));
+  else if(g('#diagTest')){
+    if(!SYNC.user||!window.RFB||!RFB.resetSent){toast('سجّل الدخول الأول');return}
+    REM.test=true;saveREM();
+    RFB.resetSent().then(()=>{toast('وضع التجربة شغال ✓');diagnose()}).catch(()=>{REM.test=false;saveREM();toast('تعذّر تجهيز التجربة')});
+  }
+  else if(g('#diagTestOff')){REM.test=false;saveREM();doSync();toast('تم إنهاء وضع التجربة');diagnose()}
 });
 
 init();
@@ -1703,13 +1714,13 @@ init();
       sync:fn=>F.runTransaction(db,async tx=>{
         const r=ref(),snap=await tx.get(r);
         const out=fn(snap.exists()?snap.data().blob:null);
-        tx.set(r,{blob:out.blob,updated:Date.now(),app:'rattil',...(out.rem?{rem:out.rem}:{})},{merge:true});
+        tx.set(r,{blob:out.blob,updated:Date.now(),app:'rattil',...(out.rem?{rem:Object.fromEntries(Object.entries(out.rem).map(([k,v])=>[k,v==='__del__'?F.deleteField():v]))}:{})},{merge:true});
         return out;
       }),
       // إعدادات التذكير (الوقت، تشغيل/إيقاف) وتوكنات الأجهزة في نفس مستند المستخدم
       setRem:o=>F.setDoc(ref(),{rem:o},{merge:true}),
       getRem:async()=>{const sn=await F.getDoc(ref());return sn.exists()?(sn.data().rem||null):null},
-      resetSent:()=>F.updateDoc(ref(),{'rem.sent':F.deleteField()}),
+      resetSent:()=>F.updateDoc(ref(),{'rem.sent':F.deleteField(),'rem.last':F.deleteField(),'rem.seen':F.deleteField()}),
       addToken:tok=>F.runTransaction(db,async tx=>{
         const r=ref(),s=await tx.get(r),cur=(s.exists()&&s.data().rem&&s.data().rem.tokens)||[];
         if(!cur.includes(tok))tx.set(r,{rem:{tokens:[...cur,tok].slice(-8)}},{merge:true});

@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'أرسل فورًا لكل من فعّل التذكير (للتجربة فقط)'
+        type: boolean
+        default: false
 jobs:
   send:
     runs-on: ubuntu-latest
@@ -19,3 +24,4 @@ jobs:
         run: node remind.js
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FORCE: ${{ github.event.inputs.force }}

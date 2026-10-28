@@ -174,6 +174,12 @@ dl.kb dd{margin:0}
 .diag{white-space:pre-wrap;direction:rtl;text-align:right;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:.85rem;line-height:1.9;margin:8px 0 0;font-family:Cairo,system-ui,sans-serif}
 .chk{display:flex;gap:8px;align-items:center;margin:8px 0}.chk input{width:18px;height:18px;accent-color:var(--emer)}
 input[type=time]{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 10px;color:inherit;font:inherit}
+.wbox{max-width:520px;text-align:center}
+.wic{font-size:3.2rem;line-height:1.2}.wt{font-family:'Amiri Quran',serif;font-size:1.7rem;color:var(--emer);margin:4px 0 10px}
+.wl{text-align:start;margin:0 auto 6px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.wl li{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 12px;line-height:1.8}
+.wdots{display:flex;gap:7px;justify-content:center;margin:14px 0 10px}.wdots i{width:9px;height:9px;border-radius:50%;background:var(--line)}.wdots i.on{background:var(--gold)}
+.wnav{justify-content:center;margin-top:6px}.wnav .ghost{border-color:transparent;background:transparent;color:var(--mut)}
 #toast{position:fixed;inset:auto 12px 96px 12px;margin:0 auto;max-width:420px;text-align:center;background:var(--ink);color:var(--page);padding:10px 16px;border-radius:12px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .25s;z-index:30}
 #toast.show{opacity:1}
 body:not([data-tab=hifz]) #toast{bottom:24px}
@@ -189,6 +195,7 @@ body:not([data-tab=hifz]) #toast{bottom:24px}
     <button id="fMinus" aria-label="تصغير الخط">أ−</button>
     <button id="fPlus" aria-label="تكبير الخط">أ+</button>
     <button id="kbBtn" aria-label="اختصارات الكيبورد (؟)">⌨</button>
+    <button id="helpBtn" aria-label="شرح التطبيق" title="شرح التطبيق">❓</button>
     <button id="cloudBtn" aria-label="الحساب والمزامنة" title="الحساب والمزامنة">☁</button>
     <button id="theme" aria-label="تبديل الوضع الليلي">🌙 ليلي</button>
   </div>
@@ -308,6 +315,13 @@ body:not([data-tab=hifz]) #toast{bottom:24px}
     <dl class="kb"><dt>Space أو Enter</dt><dd>ابدأ أو أظهر الآية</dd><dt>N / H / Y</dt><dd>نسيتها / صعبة / تذكرتها</dd><dt>P</dt><dd>استماع</dd></dl>
     <p><b>الاختبار</b></p>
     <dl class="kb"><dt>Space أو Enter</dt><dd>ابدأ / قولها بصوتك / خلصت / التالي بعد التقييم بالصوت</dd><dt>V</dt><dd>قولها بصوتك</dd><dt>M</dt><dd>إظهار الآية (تقييم يدوي)</dd><dt>L</dt><dd>تلميح</dd><dt>C</dt><dd>سماع أول كلمتين</dd><dt>P</dt><dd>استماع</dd><dt>Y / N</dt><dd>صح / غلطت</dd></dl>
+  </div>
+</div>
+<div class="modal" id="wlc" hidden role="dialog" aria-modal="true" aria-label="شرح التطبيق">
+  <div class="mbox wbox">
+    <div id="wBody"></div>
+    <div class="wdots" id="wDots" aria-hidden="true"></div>
+    <div class="row wnav"><button id="wPrev">السابق</button><button id="wNext" class="primary">التالي</button><button id="wSkip" class="ghost">تخطي</button></div>
   </div>
 </div>
 <script>
@@ -1300,8 +1314,8 @@ async function loadAll(){
   }
   return QALL=out;
 }
-const modalOpen=()=>!$('#srch').hidden||!$('#kbh').hidden;
-function closeModals(){$('#srch').hidden=true;$('#kbh').hidden=true}
+const modalOpen=()=>!$('#srch').hidden||!$('#kbh').hidden||!$('#wlc').hidden;
+function closeModals(){if(!$('#wlc').hidden)closeWelcome();$('#srch').hidden=true;$('#kbh').hidden=true}
 function openSearch(){closeModals();$('#srch').hidden=false;$('#sq').value='';$('#sres').innerHTML='<p class="hint">اكتب اسم سورة، أو جزء من آية، أو رقم مثل ٢:٢٥٥ أو «البقرة ٢٥٥».</p>';setTimeout(()=>$('#sq').focus(),30)}
 function openHelp(){closeModals();$('#kbh').hidden=false}
 async function runSearch(){
@@ -1704,6 +1718,44 @@ document.addEventListener('click',e=>{
   }
   else if(g('#diagTestOff')){REM.test=false;saveREM();doSync();toast('تم إنهاء وضع التجربة');diagnose()}
 });
+
+/* ---------- شاشة الترحيب والشرح (بتظهر مرة واحدة، وزر ❓ بيفتحها تاني) ---------- */
+const WSTEPS=[
+  {i:'📖',t:'أهلاً بيك في رتل',l:['رتل بيساعدك تحفظ القرآن وتراجعه وتختبر نفسك، خطوة بخطوة.','الشرح ده دقيقة واحدة. تقدر تتخطاه وتفتحه تاني في أي وقت من زر ❓ فوق.','تقدمك بيتحفظ على جهازك، ولو سجّلت دخول بجوجل بيتحفظ كمان على السحابة.']},
+  {i:'✍️',t:'الحفظ',l:['اختار السورة ونطاق الآيات (من آية إلى آية) من «الإعدادات».','اضغط على أي آية عشان تحدّدها، واسمعها بزر ▶ استماع. وتقدر تحدد عدد التكرار وفاصل الترديد.','اخفِ جزء من الآية (٢٥٪ لحد ١٠٠٪) واتلُها من حفظك، واضغط على أي كلمة مخفية عشان تظهر.','«تدرج تلقائي» بيرفع نسبة الإخفاء لوحده كل ما تقول الآية صح.','لما تتأكد إنك حفظتها اضغط «حفظتها».']},
+  {i:'🔁',t:'المراجعة',l:['الآيات اللي حفظتها بترجع لك في مواعيد (بكرة، بعد كام يوم، بعد أسبوع...) عشان تثبت.','بعد ما تقول الآية قيّم نفسك: نسيتها، أو صعبة، أو تذكرتها. وكل ما كانت أسهل، الميعاد الجاي بيبعد.','ابدأ كل يوم بالآيات المستحقة للمراجعة في تبويب «المراجعة».']},
+  {i:'🎯',t:'الاختبار',l:['اختار نوع الاختبار: آية كاملة، أو أول كلمتين، أو الآية اللي بعد آية معيّنة (مفيد للمتشابهات).','اضغط «قولها بصوتك» والبرنامج يسمعك ويقيّمك (على Chrome أو Edge). ممكن يغلط في فهم الصوت أحياناً، فلو غلط اضغط «اعتبرها صح» أو قيّم نفسك يدوي.','لازم تجيب ٧٠٪ أو أكتر في الاختبار عشان يومك يتحسب مجتاز.','الآيات اللي بتغلط فيها بتتعلّم بالأحمر لحد ما تجاوبها صح.']},
+  {i:'📊',t:'التقدم والحساب',l:['تبويب «التقدم» فيه أيامك المتتالية، وهدفك اليومي، ودرجات اختباراتك يوم بيوم.','سجّل دخول بجوجل (من التقدم أو زر ☁) عشان تلاقي تقدمك على أي جهاز.','تقدر تثبّت التطبيق على موبايلك وتحمّل المصحف عشان النصوص تشتغل من غير إنترنت.','من نفس التبويب تقدر تعمل نسخة احتياطية من تقدمك.']},
+  {i:'⌨️',t:'لمسات سريعة',l:['🔍 بحث بالسورة أو بنص الآية (أو اضغط /).','أ+ و أ− لتكبير الخط، و🌙 للوضع الليلي.','⌨ اختصارات الكيبورد على الكمبيوتر (أو اضغط ؟).','جاهز؟ اضغط «ابدأ الحفظ» وربنا يعينك.']}
+];
+let WI=0;
+function drawWelcome(){
+  const st=WSTEPS[WI],last=WI===WSTEPS.length-1;
+  $('#wBody').innerHTML=`<div class="wic" aria-hidden="true">${st.i}</div><h2 class="wt">${st.t}</h2><ul class="wl">${st.l.map(x=>`<li>${x}</li>`).join('')}</ul>`;
+  $('#wDots').innerHTML=WSTEPS.map((_,i)=>`<i class="${i===WI?'on':''}"></i>`).join('');
+  $('#wPrev').hidden=WI===0;$('#wSkip').hidden=last;
+  $('#wNext').textContent=last?'ابدأ الحفظ':'التالي';
+  const box=$('#wlc .mbox');if(box)box.scrollTop=0;
+}
+function openWelcome(){closeModals();WI=0;drawWelcome();$('#wlc').hidden=false;setTimeout(()=>$('#wNext').focus(),30)}
+function closeWelcome(){$('#wlc').hidden=true;try{localStorage.setItem('rattil_welcome','1')}catch(e){}}
+function welcomeNext(){if(WI>=WSTEPS.length-1){closeWelcome();tab('hifz');return}WI++;drawWelcome()}
+function welcomePrev(){if(WI>0){WI--;drawWelcome()}}
+$('#wNext').onclick=welcomeNext;$('#wPrev').onclick=welcomePrev;$('#wSkip').onclick=closeWelcome;
+$('#helpBtn').onclick=openWelcome;
+$('#wlc').onclick=e=>{if(e.target.id==='wlc')closeWelcome()};
+document.addEventListener('keydown',e=>{
+  if($('#wlc').hidden||e.ctrlKey||e.metaKey||e.altKey)return;
+  if(e.code==='ArrowLeft'){welcomeNext();e.preventDefault()}      // الواجهة من اليمين لليسار: اليسار = التالي
+  else if(e.code==='ArrowRight'){welcomePrev();e.preventDefault()}
+});
+// لأول مرة بس، ولو مفيش أي تقدم محفوظ (اللي عنده تقدم بالفعل ما بيظهرلوش)
+try{
+  if(!localStorage.getItem('rattil_welcome')){
+    if(!Object.keys(D.ayat).length&&!Object.keys(D.log).length)setTimeout(openWelcome,700);
+    else localStorage.setItem('rattil_welcome','1');
+  }
+}catch(e){}
 
 init();
 </script>

@@ -232,7 +232,11 @@ body:not([data-tab=hifz]) #toast{bottom:24px}
         <button data-hm="auto">تدرج تلقائي</button>
         <button id="reshuffle">🔀 إخفاء جديد</button>
       </div>
-      <p class="hint" id="hmHint" hidden>كل آية بتبدأ بإخفاء ٢٥٪. اختار آية واتلُها من حفظك، وبعدين اضغط «قلتها صح» عشان تطلع للمرحلة اللي بعدها (٥٠٪ ثم ٧٥٪ ثم ١٠٠٪). لو غلطت اضغط «غلطت» وترجع مرحلة. الكلمات المخفية بتتغير في كل مرة.</p>
+      <div class="row" id="hsRow" hidden>
+        <label for="hsN">عدد مرات النجاح للترقية</label>
+        <select id="hsN"><option value="1">١</option><option value="2" selected>٢</option><option value="3">٣</option><option value="5">٥</option></select>
+      </div>
+      <p class="hint" id="hmHint" hidden>كل آية بتبدأ بإخفاء ٢٥٪. اختار آية واتلُها من حفظك، وبعدين اضغط «قلتها صح». وبعد ما تنجح العدد اللي حددته (٢ مثلاً) بتطلع لوحدها للمرحلة اللي بعدها (٥٠٪ ثم ٧٥٪ ثم ١٠٠٪)، والكلمات المخفية بتتغير في كل مرة. ولو استخدمت زر «تحقّق» أو «سجّل» بالصوت وطابقت الآية، النجاح بيتحسب تلقائي من غير ما تضغط. «غلطت» بترجعك مرحلة.</p>
       <div class="row">
         <label for="rep">التكرار</label>
         <select id="rep"><option>1</option><option>3</option><option>5</option><option>10</option></select>
@@ -364,7 +368,7 @@ const dayDiff=(a,b)=>Math.round((pd(b)-pd(a))/864e5);
 const num0=v=>Number.isFinite(+v)&&+v>0?Math.floor(+v):0;
 // تنظيف أي بيانات جاية من التخزين أو من ملف مستورد
 function sanitize(x){
-  const o={v:2,ayat:{},log:{},hl:{},del:{},gu:0,goal:5,migrated:true,created:dk()};
+  const o={v:2,ayat:{},log:{},hl:{},hs:{},del:{},gu:0,goal:5,migrated:true,created:dk()};
   if(!x||typeof x!=='object')return o;
   if(x.ayat&&typeof x.ayat==='object')for(const k of Object.keys(x.ayat)){
     const m=/^(\d{1,3}):(\d{1,3})$/.exec(k);if(!m)continue;
@@ -388,6 +392,11 @@ function sanitize(x){
     const m=/^(\d{1,3}):(\d{1,3})$/.exec(k);if(!m)continue;
     const s=+m[1],n=+m[2],v=+x.hl[k];if(s<1||s>114||n<1||n>AC[s-1])continue;
     if(Number.isInteger(v)&&v>=1&&v<=3)o.hl[k]=v;
+  }
+  if(x.hs&&typeof x.hs==='object')for(const k of Object.keys(x.hs)){          // عدد النجاحات الحالية لكل آية (للتدرج التلقائي)
+    const m=/^(\d{1,3}):(\d{1,3})$/.exec(k);if(!m)continue;
+    const s=+m[1],n=+m[2],v=+x.hs[k];if(s<1||s>114||n<1||n>AC[s-1])continue;
+    if(Number.isInteger(v)&&v>=1&&v<=99)o.hs[k]=v;
   }
   if(x.del&&typeof x.del==='object')for(const k of Object.keys(x.del)){      // علامات الحذف (للمزامنة)
     const m=/^(\d{1,3}):(\d{1,3})$/.exec(k);if(!m)continue;
@@ -584,13 +593,35 @@ function rehide(n){
   HS[n]=genHide(a,s);
   e.querySelectorAll('.w').forEach((w,i)=>w.classList.toggle('h',HS[n].has(i)));
 }
+const HSN=()=>{const e=$('#hsN');return e?(+e.value||2):2};
+const hcount=(s,n)=>(((D.hs||{})[s+':'+n])|0);
+// نجاح واحد: لو وصل للعدد المطلوب بيطلع مرحلة لوحده. بيرجّع الرسالة (والـtoast بيظهر إلا لو quiet)
+function lvSuccess(s,n,quiet){
+  const k=s+':'+n,old=hlv(s,n),need=HSN();
+  D.hl=D.hl||{};D.hs=D.hs||{};
+  let c=Math.min(hcount(s,n)+1,need),msg;
+  if(c>=need&&old<3){
+    D.hl[k]=old+1;delete D.hs[k];
+    msg=`ترقّيت لإخفاء ${toAr(LV4[old+1])}٪`;
+  }else if(c>=need){
+    D.hs[k]=c;
+    msg=hcount(s,n)>=need?'قلتها بإخفاء كامل ١٠٠٪ من قبل. لو حفظتها علّمها «حفظتها» وجرّب الاختبار.':'ما شاء الله، وصلت لإخفاء كامل ١٠٠٪! لو حفظتها علّمها «حفظتها» وجرّب الاختبار.';
+  }else{
+    D.hs[k]=c;msg=`نجاح ${toAr(c)} من ${toAr(need)} عند إخفاء ${toAr(LV4[old])}٪`;
+  }
+  saveD();
+  if(s===+$('#surah').value){rehide(n);updBar()}
+  if(!quiet)toast(msg);
+  return msg;
+}
+function lvSuccessSel(){if(sel!==null)lvSuccess(+$('#surah').value,sel,false)}
+// غلطة: بترجع مرحلة وبتصفّر عدّاد النجاحات
 function lvChange(d){
-  if(sel===null)return;
-  const s=+$('#surah').value,k=s+':'+sel,old=hlv(s,sel),nw=Math.min(3,Math.max(0,old+d));
-  D.hl=D.hl||{};if(nw===0)delete D.hl[k];else D.hl[k]=nw;saveD();
-  if(d>0&&old===3)toast('ما شاء الله، قلتها بإخفاء كامل ١٠٠٪. لو حفظتها علّمها «حفظتها» وجرّب الاختبار.');
-  else if(d>0)toast(`تمام، المرحلة الجاية إخفاء ${toAr(LV4[nw])}٪`);
-  else toast(`رجعت لإخفاء ${toAr(LV4[nw])}٪، كمّل مراجعة`);
+  if(sel===null||d>=0)return;
+  const s=+$('#surah').value,k=s+':'+sel,old=hlv(s,sel),nw=Math.max(0,old-1);
+  D.hl=D.hl||{};D.hs=D.hs||{};
+  if(nw===0)delete D.hl[k];else D.hl[k]=nw;delete D.hs[k];saveD();
+  toast(old===0?'كمّل مراجعة عند إخفاء ٢٥٪':`رجعت لإخفاء ${toAr(LV4[nw])}٪، كمّل مراجعة`);
   rehide(sel);updBar();
 }
 
@@ -612,7 +643,7 @@ function progress(){
 function updBar(){
   const on=sel!==null;
   ['#bPlay','#bShow','#bDone'].forEach(b=>$(b).disabled=!on);
-  $('#sel').textContent=on?`الآية ${toAr(sel)}${hm==='auto'?` • إخفاء ${toAr(pctFor(+$('#surah').value,sel))}٪`:''}`:'اضغط على أي آية لتحديدها';
+  $('#sel').textContent=on?`الآية ${toAr(sel)}${hm==='auto'?` • إخفاء ${toAr(pctFor(+$('#surah').value,sel))}٪ • نجاح ${toAr(hcount(+$('#surah').value,sel))}/${toAr(HSN())}`:''}`:'اضغط على أي آية لتحديدها';
   ['#bOk','#bBad'].forEach(b=>$(b).hidden=!(on&&hm==='auto'));
   $('#bRec').disabled=!on&&!(REC.mr&&REC.mr.state==='recording');
   $('#bChk').disabled=!on&&!CHK;
@@ -625,9 +656,11 @@ $('#surah').onchange=()=>{$('#from').value=1;$('#to').value=Math.min(5,cur().num
 $('#from').onchange=$('#to').onchange=()=>{clamp();sel=null;updBar();render()};
 document.querySelectorAll('[data-hm]').forEach(b=>b.onclick=()=>{
   hm=b.dataset.hm;document.querySelectorAll('[data-hm]').forEach(x=>x.classList.toggle('on',x===b));
-  $('#hmHint').hidden=hm!=='auto';render();updBar()});
+  $('#hmHint').hidden=hm!=='auto';$('#hsRow').hidden=hm!=='auto';render();updBar()});
 $('#reshuffle').onclick=()=>render();
-$('#bOk').onclick=()=>lvChange(1);
+$('#bOk').onclick=()=>lvSuccessSel();
+try{const hv=localStorage.getItem('rattil_hsn');if(hv&&[...$('#hsN').options].some(o=>o.value===hv))$('#hsN').value=hv}catch(e){}
+$('#hsN').onchange=()=>{try{localStorage.setItem('rattil_hsn',$('#hsN').value)}catch(e){}updBar()};
 $('#bBad').onclick=()=>lvChange(-1);
 $('#inner').onclick=e=>{
   const ay=e.target.closest('.ay');if(!ay)return;
@@ -763,6 +796,7 @@ function align(E,H){
   }
   return{res,extra};
 }
+let VLAST=null;   // آخر نتيجة تحقق بالصوت (للتدرج التلقائي)
 async function vfyHTML(s,n,o){
   if(!SRC)return '<p class="note">التحقق من الكلام محتاج متصفح بيدعم التعرف على الصوت (Chrome أو Edge). من غيره التسجيل لوحده ما يقدرش يتأكد إن الكلام صح.</p>';
   if(!o)return '';
@@ -772,6 +806,7 @@ async function vfyHTML(s,n,o){
   const A=await getAyahs(s),E=A[n-1].w,H=heard.split(/\s+/).filter(Boolean);
   const {res,extra}=align(E,H);
   const pts=res.reduce((t,x)=>t+(x==='ok'?1:x==='cl'?.5:0),0),score=Math.round(pts/E.length*100);
+  VLAST={s,n,score};
   const verdict=score>=85?['up','مطابقة ✓']:score>=PASS?['cl','شبه مطابقة، راجع الكلمات الملوّنة']:['dn','مش مطابقة، راجع الآية وأعد المحاولة'];
   const words=E.map((w,i)=>`<span class="${res[i]}">${w}</span>`).join(' ');
   return `<div class="vsc ${verdict[0]==='cl'?'':verdict[0]}">تطابق ${toAr(score)}٪ — ${verdict[1]}</div>
@@ -820,7 +855,8 @@ async function toggleCheck(){
 async function showCompare(o,withAudio){
   const box=$('#recBox'),{s,n}=REC,aud=withAudio&&REC.url;box.hidden=false;
   box.innerHTML='<p class="msg" style="padding:10px">بحلّل تلاوتك…</p>';
-  let v='';try{v=await vfyHTML(s,n,o)}catch(e){v='<p class="note">تعذّر تحميل نص الآية للمقارنة. تأكد من الاتصال.</p>'}
+  VLAST=null;let v='';try{v=await vfyHTML(s,n,o)}catch(e){v='<p class="note">تعذّر تحميل نص الآية للمقارنة. تأكد من الاتصال.</p>'}
+  if(hm==='auto'&&VLAST&&VLAST.s===s&&VLAST.n===n&&VLAST.score>=VPASS)v+=`<p class="note">✅ اتحسب نجاح تلقائي (${toAr(VLAST.score)}٪): ${esc(lvSuccess(s,n,true))}</p>`;
   box.innerHTML=`<h2>${aud?'تلاوتك':'تحقّق من تلاوتك'} — ${sname(s)} • الآية ${toAr(n)}</h2>${v}
     <div class="row"><button id="rcRef">▶ القارئ</button>${aud?'<button id="rcMe">▶ تلاوتك</button><button id="rcBoth">▶ القارئ ثم أنت</button>':''}<button id="rcAgain" class="primary">🔁 كرر</button><button id="rcClose">إغلاق</button></div>
     ${aud?'<p class="note" id="rcInfo"></p>':''}
@@ -1404,12 +1440,12 @@ const srt=o=>Object.fromEntries(Object.keys(o).sort().map(k=>[k,o[k]]));
 // الشكل المضغوط اللي بيتخزن في السحابة (ملف واحد لكل مستخدم)
 function packD(d){
   const a={};for(const k of Object.keys(d.ayat).sort()){const e=d.ayat[k];a[k]=[e.d||'',e.b==null?'':e.b,e.n||'',e.l||'',e.x||0,e.w||0,e.u||0]}
-  return JSON.stringify({v:3,g:d.goal,gu:d.gu||0,c:d.created,h:srt(d.hl||{}),del:srt(d.del||{}),l:srt(d.log||{}),a});
+  return JSON.stringify({v:3,g:d.goal,gu:d.gu||0,c:d.created,h:srt(d.hl||{}),hs:srt(d.hs||{}),del:srt(d.del||{}),l:srt(d.log||{}),a});
 }
 function unpackD(str){
   const j=JSON.parse(str),ayat={};
   for(const k of Object.keys(j.a||{})){const r=j.a[k];ayat[k]={d:r[0]||null,b:r[1]===''?undefined:r[1],n:r[2]||undefined,l:r[3]||undefined,x:r[4]||undefined,w:r[5]||undefined,u:r[6]||undefined}}
-  return sanitize({v:2,ayat,log:j.l,hl:j.h,del:j.del,goal:j.g,gu:j.gu,created:j.c});
+  return sanitize({v:2,ayat,log:j.l,hl:j.h,hs:j.hs,del:j.del,goal:j.g,gu:j.gu,created:j.c});
 }
 // دمج نسختين من التقدم: الأحدث بيكسب في كل آية، والحذف الأحدث بيمسح، وسجل الأيام بياخد الأكبر
 function mergeD(a,b){
@@ -1436,6 +1472,10 @@ function mergeD(a,b){
     o.log[k]=r;
   }
   for(const k of new Set([...Object.keys(a.hl||{}),...Object.keys(b.hl||{})]))o.hl[k]=Math.max((a.hl||{})[k]||0,(b.hl||{})[k]||0);
+  for(const k of new Set([...Object.keys(a.hl||{}),...Object.keys(b.hl||{}),...Object.keys(a.hs||{}),...Object.keys(b.hs||{})])){
+    const la=(a.hl||{})[k]||0,lb=(b.hl||{})[k]||0,ca=(a.hs||{})[k]||0,cb=(b.hs||{})[k]||0;
+    const c=la>lb?ca:lb>la?cb:Math.max(ca,cb);if(c)o.hs[k]=c;     // العدّاد بيتبع الجهاز اللي وصل لمرحلة أعلى
+  }
   o.gu=Math.max(a.gu||0,b.gu||0);o.goal=(b.gu||0)>(a.gu||0)?b.goal:a.goal;
   o.created=[a.created,b.created].filter(Boolean).sort()[0]||o.created;
   schedule(o);
@@ -1722,7 +1762,7 @@ document.addEventListener('click',e=>{
 /* ---------- شاشة الترحيب والشرح (بتظهر مرة واحدة، وزر ❓ بيفتحها تاني) ---------- */
 const WSTEPS=[
   {i:'📖',t:'أهلاً بيك في رتل',l:['رتل بيساعدك تحفظ القرآن وتراجعه وتختبر نفسك، خطوة بخطوة.','الشرح ده دقيقة واحدة. تقدر تتخطاه وتفتحه تاني في أي وقت من زر ❓ فوق.','تقدمك بيتحفظ على جهازك، ولو سجّلت دخول بجوجل بيتحفظ كمان على السحابة.']},
-  {i:'✍️',t:'الحفظ',l:['اختار السورة ونطاق الآيات (من آية إلى آية) من «الإعدادات».','اضغط على أي آية عشان تحدّدها، واسمعها بزر ▶ استماع. وتقدر تحدد عدد التكرار وفاصل الترديد.','اخفِ جزء من الآية (٢٥٪ لحد ١٠٠٪) واتلُها من حفظك، واضغط على أي كلمة مخفية عشان تظهر.','«تدرج تلقائي» بيرفع نسبة الإخفاء لوحده كل ما تقول الآية صح.','لما تتأكد إنك حفظتها اضغط «حفظتها».']},
+  {i:'✍️',t:'الحفظ',l:['اختار السورة ونطاق الآيات (من آية إلى آية) من «الإعدادات».','اضغط على أي آية عشان تحدّدها، واسمعها بزر ▶ استماع. وتقدر تحدد عدد التكرار وفاصل الترديد.','اخفِ جزء من الآية (٢٥٪ لحد ١٠٠٪) واتلُها من حفظك، واضغط على أي كلمة مخفية عشان تظهر.','«تدرج تلقائي» بيرفع نسبة الإخفاء لوحده بعد ما تنجح عدد مرات تحدده (٢ مثلاً)، وزر «تحقّق» بالصوت بيحسب النجاح تلقائي.','لما تتأكد إنك حفظتها اضغط «حفظتها».']},
   {i:'🔁',t:'المراجعة',l:['الآيات اللي حفظتها بترجع لك في مواعيد (بكرة، بعد كام يوم، بعد أسبوع...) عشان تثبت.','بعد ما تقول الآية قيّم نفسك: نسيتها، أو صعبة، أو تذكرتها. وكل ما كانت أسهل، الميعاد الجاي بيبعد.','ابدأ كل يوم بالآيات المستحقة للمراجعة في تبويب «المراجعة».']},
   {i:'📝',t:'الاختبار',l:['اختار نوع الاختبار: آية كاملة، أو أول كلمتين، أو الآية اللي بعد آية معيّنة (مفيد للمتشابهات).','اضغط «قولها بصوتك» والبرنامج يسمعك ويقيّمك (على Chrome أو Edge). ممكن يغلط في فهم الصوت أحياناً، فلو غلط اضغط «اعتبرها صح» أو قيّم نفسك يدوي.','لازم تجيب ٧٠٪ أو أكتر في الاختبار عشان يومك يتحسب مجتاز.','الآيات اللي بتغلط فيها بتتعلّم بالأحمر لحد ما تجاوبها صح.']},
   {i:'📊',t:'التقدم والحساب',l:['تبويب «التقدم» فيه أيامك المتتالية، وهدفك اليومي، ودرجات اختباراتك يوم بيوم.','سجّل دخول بجوجل (من التقدم أو زر ☁) عشان تلاقي تقدمك على أي جهاز.','تقدر تثبّت التطبيق على موبايلك وتحمّل المصحف عشان النصوص تشتغل من غير إنترنت.','من نفس التبويب تقدر تعمل نسخة احتياطية من تقدمك.']},

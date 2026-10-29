@@ -274,6 +274,11 @@ body:not([data-tab=hifz]) #toast{bottom:24px}
         <label for="gap">فاصل الترديد</label>
         <select id="gap"><option value="0">بدون</option><option value="len">بقدر مدة الآية</option><option value="3">٣ ثواني</option><option value="6">٦ ثواني</option></select>
       </div>
+      <div class="row">
+        <label>محرك التحقق بالصوت</label>
+        <select class="asrEng"><option value="browser">خدمة المتصفح (أسرع)</option><option value="quran">نموذج القرآن (أدق، تجريبي)</option></select>
+        <span class="asrStatus hint"></span>
+      </div>
     </details>
 
     <section class="page" aria-live="polite">
@@ -768,6 +773,107 @@ async function srStop(o){
   await Promise.race([o.end,new Promise(r=>setTimeout(r,2500))]);
   return o;
 }
+// ===== محرك «نموذج القرآن»: Whisper متدرّب على التلاوة بيشتغل جوّه المتصفح (transformers.js + ONNX) =====
+// الصوت ما بيخرجش من جهازك. أول مرة بينزّل النموذج (حوالي ١٠٠ ميجا) وبعدها بيتخزّن في المتصفح.
+// تقدر تغيّر QMODELS لنسخة بتاعتك لو نسخت النموذج على حسابك في Hugging Face (أأمن من الاعتماد على حساب غريب).
+const QLIB='https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+const QMODELS=['iqbalaesthetic/Basira'];
+let ENGINE='browser';try{ENGINE=localStorage.getItem('rattil_asr')==='quran'?'quran':'browser'}catch(e){}
+let QPIPE=null,QPIPE_P=null,QPROG={},QERR='';
+const qSupported=()=>!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder&&window.WebAssembly);
+const asrOK=()=>ENGINE==='quran'?qSupported():!!SRC;
+const qPct=()=>{let l=0,t=0;for(const k in QPROG){l+=QPROG[k].l;t+=QPROG[k].t}return t?Math.min(99,Math.round(l/t*100)):0};
+function asrStatusText(){
+  if(ENGINE!=='quran')return '';
+  if(QPIPE)return 'جاهز ✓ (على جهازك)';
+  if(QPIPE_P)return `بيتحمّل ${toAr(qPct())}٪…`;
+  return QERR?'فشل التحميل':'هيتحمّل أول استخدام';
+}
+function asrBusyText(){
+  if(ENGINE!=='quran')return 'بحلّل تلاوتك…';
+  return QPIPE?'بحلّل تلاوتك بنموذج القرآن… (ممكن ياخد كام ثانية)':`بحمّل نموذج القرآن ${toAr(qPct())}٪ (أول مرة بس)…`;
+}
+function asrDraw(){
+  document.querySelectorAll('.asrEng').forEach(e=>{e.value=ENGINE});
+  document.querySelectorAll('.asrStatus').forEach(e=>{e.textContent=asrStatusText()});
+  const b=$('#asrBusy');if(b)b.textContent=asrBusyText();
+}
+function qProgress(ev){
+  if(ev&&ev.status==='progress'&&ev.file&&ev.total)QPROG[ev.file]={l:ev.loaded||0,t:ev.total};
+  asrDraw();
+}
+async function loadQuranModel(){
+  if(QPIPE)return QPIPE;
+  if(QPIPE_P)return QPIPE_P;
+  QERR='';QPIPE_P=(async()=>{
+    const T=await (window.__qimport?window.__qimport(QLIB):import(QLIB));
+    if(T.env)T.env.allowLocalModels=false;
+    let last=null;
+    for(const id of QMODELS){
+      try{QPROG={};return QPIPE=await T.pipeline('automatic-speech-recognition',id,{device:'wasm',dtype:'q8',progress_callback:qProgress})}
+      catch(e){last=e}
+    }
+    throw last||new Error('no model');
+  })().catch(e=>{QPIPE_P=null;QERR=String(e&&e.message||e);console.warn('quran model failed',e);throw e}).finally(()=>asrDraw());
+  asrDraw();
+  return QPIPE_P;
+}
+async function setEngine(v){
+  if(v==='quran'){
+    if(!qSupported()){toast('المتصفح ده مش بيدعم نموذج القرآن');asrDraw();return}
+    let had=false;try{had=!!localStorage.getItem('rattil_qmodel')}catch(e){}
+    if(!QPIPE&&!had&&!confirm('نموذج القرآن حجمه حوالي ١٠٠ ميجا، بيتحمّل مرة واحدة ويفضل مخزّن على جهازك، وبعدها التحقق بالصوت بيشتغل على جهازك من غير ما الصوت يتبعت لأي حد. يفضّل تحمّله على واي فاي. تكمّل؟')){asrDraw();return}
+    ENGINE='quran';try{localStorage.setItem('rattil_asr','quran')}catch(e){}
+    asrDraw();
+    try{await loadQuranModel();try{localStorage.setItem('rattil_qmodel','1')}catch(e){}toast('نموذج القرآن جاهز ✓')}
+    catch(e){ENGINE='browser';try{localStorage.setItem('rattil_asr','browser')}catch(_){}toast('تعذّر تحميل نموذج القرآن، رجعنا لخدمة المتصفح');}
+  }else{ENGINE='browser';try{localStorage.setItem('rattil_asr','browser')}catch(e){}}
+  asrDraw();
+}
+document.addEventListener('change',e=>{if(e.target.classList&&e.target.classList.contains('asrEng'))setEngine(e.target.value)});
+// تحويل التسجيل لصوت 16kHz أحادي القناة (اللي Whisper بيطلبه)
+async function decodeTo16k(blob){
+  const ab=await blob.arrayBuffer(),AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+  let buf;try{buf=await ctx.decodeAudioData(ab)}finally{try{ctx.close()}catch(e){}}
+  let data=buf.getChannelData(0);
+  if(buf.numberOfChannels>1){const d2=buf.getChannelData(1),m=new Float32Array(data.length);for(let i=0;i<m.length;i++)m[i]=(data[i]+d2[i])/2;data=m}
+  if(buf.sampleRate===16000)return data;
+  const len=Math.ceil(data.length*16000/buf.sampleRate),oc=new OfflineAudioContext(1,len,16000),src=oc.createBufferSource(),b2=oc.createBuffer(1,data.length,buf.sampleRate);
+  b2.copyToChannel(data,0);src.buffer=b2;src.connect(oc.destination);src.start();
+  return (await oc.startRendering()).getChannelData(0).slice();
+}
+function qStart(){
+  const o={quran:true,acc:'',final:'',interim:'',err:null,stopping:false,chunks:[]};
+  o.end=new Promise(res=>{o.done=res});
+  navigator.mediaDevices.getUserMedia({audio:true}).then(stream=>{
+    if(o.stopping){stream.getTracks().forEach(t=>t.stop());o.done(o);return}
+    const mr=new MediaRecorder(stream);o.mr=mr;
+    mr.ondataavailable=e=>{if(e.data&&e.data.size)o.chunks.push(e.data)};
+    mr.onstop=()=>{stream.getTracks().forEach(t=>t.stop());o.done(o)};
+    mr.start();
+  }).catch(()=>{o.err='not-allowed';o.done(o)});
+  loadQuranModel().catch(()=>{});          // نحمّل النموذج في الخلفية وأنت بتقرأ
+  const l=$('#live');if(l)l.textContent='🎙 بسجّل…';
+  return o;
+}
+async function qStop(o){
+  o.stopping=true;
+  try{if(o.mr&&o.mr.state==='recording')o.mr.stop()}catch(e){}
+  await Promise.race([o.end,new Promise(r=>setTimeout(r,3000))]);
+  if(o.err)return o;
+  if(!o.chunks.length){o.err='none';return o}
+  try{
+    const pipe=await loadQuranModel();
+    const audio=await decodeTo16k(new Blob(o.chunks,{type:(o.mr&&o.mr.mimeType)||'audio/webm'}));
+    if(audio.length<6400){o.err='none';return o}          // أقل من نص ثانية تقريبًا
+    const out=await pipe(audio,{language:'arabic',task:'transcribe',chunk_length_s:30});
+    o.acc=String(out&&out.text||'').trim();
+  }catch(e){console.warn('quran asr failed',e);o.err='model-failed'}
+  return o;
+}
+const asrStart=()=>ENGINE==='quran'?qStart():srStart();
+const asrStop=o=>o&&o.quran?qStop(o):srStop(o);
+
 // تطبيع الكلمات عشان نقارن الرسم من غير تشكيل واختلافات الهمزة
 const nz=w=>strip(w).replace(/[\u0623\u0625\u0622\u0671]/g,'\u0627').replace(/\u0649/g,'\u064A').replace(/\u0629/g,'\u0647').replace(/\u0624/g,'\u0648').replace(/\u0626/g,'\u064A').replace(/\u0640/g,'').replace(/[^\u0621-\u064A]/g,'');
 function lev(a,b){
@@ -798,10 +904,10 @@ function align(E,H){
 }
 let VLAST=null;   // آخر نتيجة تحقق بالصوت (للتدرج التلقائي)
 async function vfyHTML(s,n,o){
-  if(!SRC)return '<p class="note">التحقق من الكلام محتاج متصفح بيدعم التعرف على الصوت (Chrome أو Edge). من غيره التسجيل لوحده ما يقدرش يتأكد إن الكلام صح.</p>';
+  if(!asrOK())return '<p class="note">التحقق من الكلام محتاج متصفح بيدعم التعرف على الصوت (Chrome أو Edge)، أو شغّل «نموذج القرآن» من الإعدادات. من غيره التسجيل لوحده ما يقدرش يتأكد إن الكلام صح.</p>';
   if(!o)return '';
   const heard=(o.acc||'').trim();
-  const em={'not-allowed':'لازم تسمح باستخدام الميكروفون.','service-not-allowed':'المتصفح مش سامح بخدمة التعرف على الصوت.','network':'التعرف على الصوت محتاج اتصال بالإنترنت.','audio-capture':'مفيش ميكروفون شغال.','start-failed':'ما قدرتش أبدأ التعرف على الصوت، جرّب زر «تحقّق» لوحده من غير تسجيل.'};
+  const em={'not-allowed':'لازم تسمح باستخدام الميكروفون.','service-not-allowed':'المتصفح مش سامح بخدمة التعرف على الصوت.','network':'التعرف على الصوت محتاج اتصال بالإنترنت.','audio-capture':'مفيش ميكروفون شغال.','start-failed':'ما قدرتش أبدأ التعرف على الصوت، جرّب زر «تحقّق» لوحده من غير تسجيل.','model-failed':'تعذّر تشغيل نموذج القرآن (التحميل أو الذاكرة). جرّب «خدمة المتصفح» من الإعدادات.'};
   if(!heard)return `<p class="note"><b>${em[o.err]||'ما سمعتش كلام واضح، اتأكد من الميكروفون وكرر المحاولة.'}</b></p>`;
   const A=await getAyahs(s),E=A[n-1].w,H=heard.split(/\s+/).filter(Boolean);
   const {res,extra}=align(E,H);
@@ -817,7 +923,7 @@ async function vfyHTML(s,n,o){
 }
 function listening(title){
   const b=$('#recBox');b.hidden=false;
-  b.innerHTML=`<h2>${title}</h2><p class="hint">اتلُ الآية دلوقتي من حفظك، وبعدين اضغط الزر تاني عشان توقف.</p><p class="rvtxt" id="live" style="font-size:1.4rem;text-align:center">${SRC?'…':'(التعرف على الصوت مش متاح في المتصفح ده)'}</p>`;
+  b.innerHTML=`<h2>${title}</h2><p class="hint">اتلُ الآية دلوقتي من حفظك، وبعدين اضغط الزر تاني عشان توقف.</p><p class="rvtxt" id="live" style="font-size:1.4rem;text-align:center">${asrOK()?'…':'(التعرف على الصوت مش متاح في المتصفح ده)'}</p>`;
 }
 async function toggleRec(){
   if(REC.mr&&REC.mr.state==='recording'){REC.mr.stop();return}
@@ -834,33 +940,33 @@ async function toggleRec(){
     if(REC.url)URL.revokeObjectURL(REC.url);
     REC.url=URL.createObjectURL(new Blob(REC.chunks,{type:mr.mimeType||'audio/webm'}));
     const b=$('#bRec');b.textContent='🎙 سجّل';b.classList.remove('rec');updBar();
-    const o=REC.sr?await srStop(REC.sr):null;REC.sr=null;
+    const o=REC.sr?await asrStop(REC.sr):null;REC.sr=null;
     showCompare(o,true);
   };
   listening('🎙 بسجّل وبسمعك…');
-  REC.sr=SRC?srStart():null;
+  REC.sr=asrOK()?asrStart():null;
   REC.t0=Date.now();mr.start();
   const b=$('#bRec');b.textContent='⏺ إيقاف التسجيل';b.classList.add('rec');
 }
 // تحقق بس من غير تسجيل صوت (أضمن على بعض الموبايلات)
 async function toggleCheck(){
   const b=$('#bChk');
-  if(CHK){const o=CHK;CHK=null;b.textContent='🔍 تحقّق';b.classList.remove('rec');updBar();await srStop(o);showCompare(o,false);return}
+  if(CHK){const o=CHK;CHK=null;b.textContent='🔍 تحقّق';b.classList.remove('rec');updBar();await asrStop(o);showCompare(o,false);return}
   if(sel===null||(REC.mr&&REC.mr.state==='recording'))return;
-  if(!SRC){toast('المتصفح ده مش بيدعم التعرف على الصوت، استخدم Chrome أو Edge');return}
+  if(!asrOK()){toast('المتصفح ده مش بيدعم التعرف على الصوت، استخدم Chrome أو Edge أو نموذج القرآن');return}
   stop();REC.s=+$('#surah').value;REC.n=sel;REC.last='chk';
-  listening('🔍 بسمعك…');CHK=srStart();
+  listening('🔍 بسمعك…');CHK=asrStart();
   b.textContent='⏹ إنهاء التحقق';b.classList.add('rec');
 }
 async function showCompare(o,withAudio){
   const box=$('#recBox'),{s,n}=REC,aud=withAudio&&REC.url;box.hidden=false;
-  box.innerHTML='<p class="msg" style="padding:10px">بحلّل تلاوتك…</p>';
+  box.innerHTML='<p class="msg" id="asrBusy" style="padding:10px">'+asrBusyText()+'</p>';
   VLAST=null;let v='';try{v=await vfyHTML(s,n,o)}catch(e){v='<p class="note">تعذّر تحميل نص الآية للمقارنة. تأكد من الاتصال.</p>'}
   if(hm==='auto'&&VLAST&&VLAST.s===s&&VLAST.n===n&&VLAST.score>=VPASS)v+=`<p class="note">✅ اتحسب نجاح تلقائي (${toAr(VLAST.score)}٪): ${esc(lvSuccess(s,n,true))}</p>`;
   box.innerHTML=`<h2>${aud?'تلاوتك':'تحقّق من تلاوتك'} — ${sname(s)} • الآية ${toAr(n)}</h2>${v}
     <div class="row"><button id="rcRef">▶ القارئ</button>${aud?'<button id="rcMe">▶ تلاوتك</button><button id="rcBoth">▶ القارئ ثم أنت</button>':''}<button id="rcAgain" class="primary">🔁 كرر</button><button id="rcClose">إغلاق</button></div>
     ${aud?'<p class="note" id="rcInfo"></p>':''}
-    <p class="note">${SRC?'التحقق بيبعت الصوت لخدمة التعرف على الصوت بتاعة المتصفح (في Chrome هي خدمة جوجل). ':''}${aud?'التسجيل نفسه بيفضل على جهازك ويتمسح لما تقفل الصفحة.':''}</p>`;
+    <p class="note">${asrOK()?(ENGINE==='quran'?'التحقق بنموذج القرآن بيتم على جهازك والصوت ما بيتبعتش لأي حد. ':'التحقق بيبعت الصوت لخدمة التعرف على الصوت بتاعة المتصفح (في Chrome هي خدمة جوجل). '):''}${aud?'التسجيل نفسه بيفضل على جهازك ويتمسح لما تقفل الصفحة.':''}</p>`;
   if(aud){
     const ra=new Audio(refUrl(s,n));ra.preload='metadata';
     ra.onloadedmetadata=()=>{
@@ -1205,12 +1311,14 @@ async function renderTest(){
     box.innerHTML=
     `${todayHTML()}${trendHTML(7)}${relearnHTML()}
      <div class="panel">
-       <h2>نوع الاختبار</h2><div class="seg">${seg(TTYPES,'tt',TS.type)}</div><p class="hint">${TDESC[TS.type]}</p><p class="hint">${SRC?'🎙 التقييم بالصوت شغال: بتقول الآية، والبرنامج بيحوّل كلامك لنص ويتأكد إنه مطابق ويقيّمك لوحده. (الصوت بيتبعت لخدمة التعرف على الصوت بتاعة المتصفح.)':'متصفحك مش بيدعم التعرف على الصوت، فالتقييم يدوي. استخدم Chrome أو Edge عشان يتقيّم بالصوت.'}</p>
+       <h2>نوع الاختبار</h2><div class="seg">${seg(TTYPES,'tt',TS.type)}</div><p class="hint">${TDESC[TS.type]}</p><p class="hint">${asrOK()?('🎙 التقييم بالصوت شغال: بتقول الآية، والبرنامج بيحوّل كلامك لنص ويتأكد إنه مطابق ويقيّمك لوحده. '+(ENGINE==='quran'?'(نموذج القرآن بيشتغل على جهازك والصوت ما بيتبعتش.)':'(الصوت بيتبعت لخدمة التعرف على الصوت بتاعة المتصفح.)')):'متصفحك مش بيدعم التعرف على الصوت، فالتقييم يدوي. استخدم Chrome أو Edge، أو شغّل «نموذج القرآن» من الاختيار اللي تحت.'}</p>
+       <div class="row"><label>محرك التحقق بالصوت</label><select class="asrEng"><option value="browser">خدمة المتصفح (أسرع)</option><option value="quran">نموذج القرآن (أدق، تجريبي)</option></select><span class="asrStatus hint"></span></div>
        <h2>الآيات من</h2><div class="seg">${seg([['all','كل المحفوظ'],['due','المستحق للمراجعة'],['cur','السورة المفتوحة']],'tsc',TS.scope)}</div>
        <h2>عدد الأسئلة</h2><div class="seg">${seg([[3,'٣'],[5,'٥'],[10,'١٠'],[20,'٢٠']],'tn',TS.count)}</div>
        <div class="row" style="justify-content:center"><button id="tsStart" class="primary"${pool?'':' disabled'}>ابدأ الاختبار${pool?` (${toAr(Math.min(TS.count,pool))})`:''}</button></div>
        ${pool?'':`<p class="note" style="text-align:center">${tot?'مفيش آيات مناسبة في النطاق ده. جرّب نطاق تاني.':'علّم آيات على إنك حفظتها في تبويب الحفظ الأول.'}</p>`}
      </div>`;
+    asrDraw();
     return;
   }
   if(TS.i>=TS.q.length){
@@ -1251,10 +1359,10 @@ async function renderTest(){
   else if(TS.shown)ans=`<div class="rvtxt">${W.join(' ')}</div>`;
   else if(verr)ans=`<div class="rvhide">${VERR[verr]||VERR.none}</div>`;
   else if(TS.hint)ans=`<div class="rvtxt">${tw} …</div>`;
-  else ans=`<div class="rvhide">${SRC?'اضغط «قولها بصوتك» وتلُ الآية، والبرنامج هيتأكد منها ويقيّمك لوحده.':'قول الآية من حفظك، وبعدين اضغط «إظهار الآية» وتأكد.'}</div>`;
+  else ans=`<div class="rvhide">${asrOK()?'اضغط «قولها بصوتك» وتلُ الآية، والبرنامج هيتأكد منها ويقيّمك لوحده.':'قول الآية من حفظك، وبعدين اضغط «إظهار الآية» وتأكد.'}</div>`;
   const acts=TS.listen?'<button id="tsVoice" class="primary">⏹ خلصت</button>'
     :TS.shown?'<button id="tsPlay">▶ استماع</button>'
-    :`${TS.hint?'':'<button id="tsHint">💡 تلميح: أول كلمتين</button>'}${SRC?'<button id="tsVoice" class="primary">🎙 قولها بصوتك</button><button id="tsShow">إظهار (تقييم يدوي)</button>':'<button id="tsShow" class="primary">إظهار الآية</button>'}`;
+    :`${TS.hint?'':'<button id="tsHint">💡 تلميح: أول كلمتين</button>'}${asrOK()?'<button id="tsVoice" class="primary">🎙 قولها بصوتك</button><button id="tsShow">إظهار (تقييم يدوي)</button>':'<button id="tsShow" class="primary">إظهار الآية</button>'}`;
   box.innerHTML=
   `<div class="panel">
      <div class="prog"><span>${toAr(TS.i+1)} من ${toAr(total)}</span><div class="bar"><i style="width:${TS.i/total*100}%"></i></div></div>
@@ -1271,7 +1379,7 @@ async function renderTest(){
 }
 const VPASS=80;   // نسبة التطابق اللي بتعتبر الآية صح في الاختبار بالصوت
 const VLEG='<div class="vlg"><span class="ok">■ صح</span><span class="cl">■ قريبة</span><span class="bd">■ كلمة مختلفة</span><span class="ms">■ ناقصة</span></div>';
-const VERR={none:'ما سمعتش كلام واضح. اتأكد من الميكروفون وحاول تاني، أو اضغط «إظهار (تقييم يدوي)».','not-allowed':'لازم تسمح باستخدام الميكروفون، وبعدين حاول تاني.','service-not-allowed':'المتصفح مش سامح بخدمة التعرف على الصوت.',network:'التعرف على الصوت محتاج اتصال بالإنترنت.','audio-capture':'مفيش ميكروفون شغال.','start-failed':'ما قدرتش أبدأ التعرف على الصوت. استخدم التقييم اليدوي.'};
+const VERR={none:'ما سمعتش كلام واضح. اتأكد من الميكروفون وحاول تاني، أو اضغط «إظهار (تقييم يدوي)».','not-allowed':'لازم تسمح باستخدام الميكروفون، وبعدين حاول تاني.','service-not-allowed':'المتصفح مش سامح بخدمة التعرف على الصوت.',network:'التعرف على الصوت محتاج اتصال بالإنترنت.','audio-capture':'مفيش ميكروفون شغال.','start-failed':'ما قدرتش أبدأ التعرف على الصوت. استخدم التقييم اليدوي.','model-failed':'تعذّر تشغيل نموذج القرآن (التحميل أو الذاكرة). جرّب «خدمة المتصفح» أو التقييم اليدوي.'};
 // skip=2 في اختبار «أول كلمتين»: لو قلت الباقي بس من غير أول كلمتين برضو يتحسب
 async function scoreRecite(s,n,heard,skip=0){
   const A=await getAyahs(s),E=A[n-1].w,H=heard.split(/\s+/).filter(Boolean);
@@ -1285,18 +1393,18 @@ async function tsVoiceToggle(){
   if(TS.listen){
     const o=TS.sr,it=TS.q[TS.i],[s,n]=it.k.split(':').map(Number);
     TS.listen=false;TS.sr=null;
-    $('#tab-test').innerHTML='<p class="msg">بحلّل تلاوتك…</p>';
-    await srStop(o);
+    $('#tab-test').innerHTML='<p class="msg" id="asrBusy">'+asrBusyText()+'</p>';
+    await asrStop(o);
     const heard=(o.acc||'').trim();
     try{TS.vr=heard?await scoreRecite(s,n,heard,TS.type==='start'?2:0):{err:o.err||'none'}}catch(e){TS.vr={err:'none'}}
     if(TS.q[TS.i]!==it||!TS.active)return;
     if(!TS.vr.err)TS.shown=true;
     renderTest();return;
   }
-  if(!SRC){toast('المتصفح ده مش بيدعم التعرف على الصوت. استخدم Chrome أو Edge أو التقييم اليدوي.');return}
+  if(!asrOK()){toast('المتصفح ده مش بيدعم التعرف على الصوت. استخدم Chrome أو Edge أو نموذج القرآن أو التقييم اليدوي.');return}
   stop();TS.vr=null;TS.listen=true;
   await renderTest();
-  if(TS.listen)TS.sr=srStart();
+  if(TS.listen)TS.sr=asrStart();
 }
 function trate(r){
   const it=TS.q[TS.i];if(!it||!TS.shown)return;
@@ -1797,6 +1905,7 @@ try{
   }
 }catch(e){}
 
+asrDraw();
 init();
 </script>
 <script type="module">

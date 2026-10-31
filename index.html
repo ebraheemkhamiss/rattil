@@ -783,11 +783,30 @@ let QPIPE=null,QPIPE_P=null,QPROG={},QERR='';
 const qSupported=()=>!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder&&window.WebAssembly);
 const asrOK=()=>ENGINE==='quran'?qSupported():!!SRC;
 const qPct=()=>{let l=0,t=0;for(const k in QPROG){l+=QPROG[k].l;t+=QPROG[k].t}return t?Math.min(99,Math.round(l/t*100)):0};
+// هل كل اللي النموذج محتاجه متخزّن؟ (مكتبة transformers.js وملف wasm من الـService Worker + ملفات النموذج)
+let QOFF=null;
+async function qOffline(){
+  try{
+    if(!window.caches)return false;
+    const lib=!!(await caches.match(QLIB));
+    let wasm=false,model=false;
+    for(const n of await caches.keys()){
+      const ks=await (await caches.open(n)).keys();
+      if(!wasm&&ks.some(r=>/\.wasm(\?|$)/.test(r.url)))wasm=true;
+      if(!model&&n==='transformers-cache'&&ks.length>0)model=true;
+    }
+    return lib&&wasm&&model;
+  }catch(e){return false}
+}
+async function qCheckOffline(){QOFF=await qOffline();asrDraw()}
 function asrStatusText(){
   if(ENGINE!=='quran')return '';
-  if(QPIPE)return 'جاهز ✓ (على جهازك)';
+  const off=QOFF?' (بيشتغل بدون إنترنت)':(QOFF===false?' (حدّث الصفحة مرة واحدة عشان يشتغل بدون إنترنت)':'');
+  if(QPIPE)return 'جاهز ✓'+off;
   if(QPIPE_P)return `بيتحمّل ${toAr(qPct())}٪…`;
-  return QERR?'فشل التحميل':'هيتحمّل أول استخدام';
+  if(QERR)return 'فشل التحميل';
+  let had=false;try{had=!!localStorage.getItem('rattil_qmodel')}catch(e){}
+  return had?'محمّل على جهازك ✓'+off:'هيتحمّل أول استخدام';
 }
 function asrBusyText(){
   if(ENGINE!=='quran')return 'بحلّل تلاوتك…';
@@ -810,7 +829,7 @@ async function loadQuranModel(){
     if(T.env)T.env.allowLocalModels=false;
     let last=null;
     for(const id of QMODELS){
-      try{QPROG={};return QPIPE=await T.pipeline('automatic-speech-recognition',id,{device:'wasm',dtype:'q8',progress_callback:qProgress})}
+      try{QPROG={};QPIPE=await T.pipeline('automatic-speech-recognition',id,{device:'wasm',dtype:'q8',progress_callback:qProgress});setTimeout(qCheckOffline,800);return QPIPE}
       catch(e){last=e}
     }
     throw last||new Error('no model');
@@ -1944,6 +1963,7 @@ try{
 }catch(e){}
 
 asrDraw();
+if(ENGINE==='quran')setTimeout(qCheckOffline,1500);
 init();
 </script>
 <script type="module">

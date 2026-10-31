@@ -888,20 +888,60 @@ function sim(a,b){
   return Math.max(x,y);
 }
 // محاذاة كلمات الآية مع الكلمات اللي اتسمعت
+// ===== عتبات المقارنة حسب المحرك (غيّر الأرقام هنا لو عايز تضبطها) =====
+// ok: أقل تشابه للكلمة الصح | cl: أقل تشابه للكلمة «القريبة» (نص درجة) | edge: اختلاف أول حرف أو آخر حرفين (يعلمون/تعلمون، المؤمنون/المؤمنين) يتحسب غلط
+// xw: وزن كل كلمة زيادة في خصم الدرجة (الدرجة = النقاط ÷ (كلمات الآية + xw × الكلمات الزيادة))
+const TH={
+  browser:{ok:.80,cl:.55,edge:false,xw:.25},   // خدمة المتصفح بتغلط في السمع كتير، فالتسامح لازم
+  quran:{ok:.95,cl:.75,edge:true,xw:.50}       // نموذج القرآن أدق، فنشدّد (يعلمون/تعلمون = غلط)
+};
+const thr=()=>TH[ENGINE]||TH.browser;
+const nzS=w=>nz(w).replace(/\u0648(?=\u0647$)/,'\u0627');          // الصلوة = الصلاة (الرسم العثماني)
+const nzE=w=>ENGINE==='quran'?nzS(w):nz(w);
+const skelA=w=>w.replace(/\u0627/g,'');
+function gradeWord(e,h){
+  const T=thr(),ne=nzE(e),nh=nzE(h),v=sim(ne,nh);
+  if(v>=T.ok)return 'ok';
+  if(v<T.cl)return 'bd';
+  if(T.edge){const a=skelA(ne),b=skelA(nh);if(a[0]!==b[0]||a.slice(-2)!==b.slice(-2))return 'bd'}
+  return 'cl';
+}
+// محاذاة كلمات الآية مع الكلمات اللي اتسمعت
 function align(E,H){
-  const n=E.length,m=H.length,en=E.map(nz),hn=H.map(nz),S=(i,j)=>sim(en[i],hn[j]);
+  const n=E.length,m=H.length,en=E.map(nzE),hn=H.map(nzE),S=(i,j)=>sim(en[i],hn[j]);
   const sc=(i,j)=>{const v=S(i,j);return v>=.5?1-v:1};
   const dp=Array.from({length:n+1},()=>new Array(m+1).fill(0));
   for(let i=1;i<=n;i++)dp[i][0]=i;for(let j=1;j<=m;j++)dp[0][j]=j;
   for(let i=1;i<=n;i++)for(let j=1;j<=m;j++)dp[i][j]=Math.min(dp[i-1][j-1]+sc(i-1,j-1),dp[i-1][j]+1,dp[i][j-1]+1);
   const res=new Array(n),extra=[];let i=n,j=m;
   while(i>0||j>0){
-    if(i>0&&j>0&&Math.abs(dp[i][j]-(dp[i-1][j-1]+sc(i-1,j-1)))<1e-9){const v=S(i-1,j-1);res[i-1]=v>=.8?'ok':v>=.55?'cl':'bd';i--;j--;continue}
+    if(i>0&&j>0&&Math.abs(dp[i][j]-(dp[i-1][j-1]+sc(i-1,j-1)))<1e-9){res[i-1]=gradeWord(E[i-1],H[j-1]);i--;j--;continue}
     if(i>0&&Math.abs(dp[i][j]-(dp[i-1][j]+1))<1e-9){res[i-1]='ms';i--;continue}
     extra.unshift(H[j-1]);j--;
   }
   return{res,extra};
 }
+const rawPts=res=>res.reduce((t,x)=>t+(x==='ok'?1:x==='cl'?.5:0),0);
+// الدرجة: كل كلمة زيادة بتخصم جزء، وتكرار التلاوة (أو محاولة قبلها) ما بيخصمش
+const finalScore=(res,extraLen,total)=>Math.round(rawPts(res)/(total+thr().xw*extraLen)*100);
+function bestAlign(E,H,pre=0){
+  const tot=E.length+pre,T=thr();
+  const cands=[],add=(r,junk)=>{const res=[...Array(pre).fill('ok'),...r.res],ex=r.extra.length+junk;cands.push({res,extra:r.extra,score:finalScore(res,ex,tot)})};
+  add(align(E,H),0);
+  // لو في كلام زيادة: نجرّب نقسّم التسجيل لمحاولة + الباقي. الباقي لو كان محاولة تانية للآية (تكرار أو محاولة قبلها) ما بيتخصمش، ولو كلام تاني بيتحسب زيادة
+  if(H.length>E.length){
+    const isAttempt=R=>R.length>=Math.ceil(E.length*.6)&&finalScore(align(E,R).res,0,E.length)>=50;
+    for(const t of new Set([0,Math.ceil(E.length*.3)])){
+      const k=Math.min(H.length,E.length+t);
+      if(k===H.length)continue;
+      const P=H.slice(0,k),R1=H.slice(k),S=H.slice(H.length-k),R2=H.slice(0,H.length-k);
+      add(align(E,P),isAttempt(R1)?0:R1.length);
+      add(align(E,S),isAttempt(R2)?0:R2.length);
+    }
+  }
+  return cands.reduce((a,c)=>c.score>a.score?c:a);
+}
+const edgeNote=()=>thr().edge?'<p class="note">في نموذج القرآن أي اختلاف في أول حرف أو آخر حرفين في الكلمة (زي يعلمون/تعلمون أو المؤمنون/المؤمنين) بيتحسب غلط، وكل كلمة زيادة بتخصم من الدرجة.</p>':'';
 let VLAST=null;   // آخر نتيجة تحقق بالصوت (للتدرج التلقائي)
 async function vfyHTML(s,n,o){
   if(!asrOK())return '<p class="note">التحقق من الكلام محتاج متصفح بيدعم التعرف على الصوت (Chrome أو Edge)، أو شغّل «نموذج القرآن» من الإعدادات. من غيره التسجيل لوحده ما يقدرش يتأكد إن الكلام صح.</p>';
@@ -910,15 +950,14 @@ async function vfyHTML(s,n,o){
   const em={'not-allowed':'لازم تسمح باستخدام الميكروفون.','service-not-allowed':'المتصفح مش سامح بخدمة التعرف على الصوت.','network':'التعرف على الصوت محتاج اتصال بالإنترنت.','audio-capture':'مفيش ميكروفون شغال.','start-failed':'ما قدرتش أبدأ التعرف على الصوت، جرّب زر «تحقّق» لوحده من غير تسجيل.','model-failed':'تعذّر تشغيل نموذج القرآن (التحميل أو الذاكرة). جرّب «خدمة المتصفح» من الإعدادات.'};
   if(!heard)return `<p class="note"><b>${em[o.err]||'ما سمعتش كلام واضح، اتأكد من الميكروفون وكرر المحاولة.'}</b></p>`;
   const A=await getAyahs(s),E=A[n-1].w,H=heard.split(/\s+/).filter(Boolean);
-  const {res,extra}=align(E,H);
-  const pts=res.reduce((t,x)=>t+(x==='ok'?1:x==='cl'?.5:0),0),score=Math.round(pts/E.length*100);
+  const {res,extra,score}=bestAlign(E,H);
   VLAST={s,n,score};
   const verdict=score>=85?['up','مطابقة ✓']:score>=PASS?['cl','شبه مطابقة، راجع الكلمات الملوّنة']:['dn','مش مطابقة، راجع الآية وأعد المحاولة'];
   const words=E.map((w,i)=>`<span class="${res[i]}">${w}</span>`).join(' ');
   return `<div class="vsc ${verdict[0]==='cl'?'':verdict[0]}">تطابق ${toAr(score)}٪ — ${verdict[1]}</div>
     <p class="vw">${words}</p>
     <div class="vlg"><span class="ok">■ صح</span><span class="cl">■ قريبة</span><span class="bd">■ كلمة مختلفة</span><span class="ms">■ ناقصة</span></div>
-    <p class="note">اللي سمعه البرنامج من صوتك: «${esc(heard)}»${extra.length?` — كلمات زيادة: ${extra.length}`:''}</p>
+    <p class="note">اللي سمعه البرنامج من صوتك: «${esc(heard)}»${extra.length?` — كلمات زيادة: ${extra.length} (${esc(extra.slice(0,5).join(' '))})`:''}</p>${edgeNote()}
     <p class="note">ده تعرّف تلقائي على الكلمات بس، مش تصحيح تجويد. لو كلمة طلعت حمرا وأنت متأكد إنك قلتها صح، ممكن البرنامج هو اللي ما فهمهاش، فاسمع تسجيلك وقارنه بالقارئ.</p>`;
 }
 function listening(title){
@@ -1355,7 +1394,7 @@ async function renderTest(){
     :btn('f','غلطت',plan(e.b||0,'f').days)+btn('g','صح',plan(e.b||0,TS.hint?'h':'g').days);
   let ans;
   if(TS.listen)ans='<p class="rvtxt" id="live" style="font-size:1.4rem;text-align:center">…</p>';
-  else if(TS.shown&&vr)ans=`<div class="vsc ${vr.score>=VPASS?'up':'dn'}">تطابق ${toAr(vr.score)}٪ — ${vr.score>=VPASS?'صح ✓':'غلطت ✗'}</div><p class="vw">${vr.E.map((w,i)=>`<span class="${vr.res[i]}">${w}</span>`).join(' ')}</p>${VLEG}<p class="note">اللي سمعه البرنامج من صوتك: «${esc(vr.heard)}»</p>`;
+  else if(TS.shown&&vr)ans=`<div class="vsc ${vr.score>=VPASS?'up':'dn'}">تطابق ${toAr(vr.score)}٪ — ${vr.score>=VPASS?'صح ✓':'غلطت ✗'}</div><p class="vw">${vr.E.map((w,i)=>`<span class="${vr.res[i]}">${w}</span>`).join(' ')}</p>${VLEG}<p class="note">اللي سمعه البرنامج من صوتك: «${esc(vr.heard)}»${vr.extra&&vr.extra.length?` — كلمات زيادة: ${vr.extra.length}`:''}</p>${edgeNote()}`;
   else if(TS.shown)ans=`<div class="rvtxt">${W.join(' ')}</div>`;
   else if(verr)ans=`<div class="rvhide">${VERR[verr]||VERR.none}</div>`;
   else if(TS.hint)ans=`<div class="rvtxt">${tw} …</div>`;
@@ -1383,8 +1422,7 @@ const VERR={none:'ما سمعتش كلام واضح. اتأكد من الميك�
 // skip=2 في اختبار «أول كلمتين»: لو قلت الباقي بس من غير أول كلمتين برضو يتحسب
 async function scoreRecite(s,n,heard,skip=0){
   const A=await getAyahs(s),E=A[n-1].w,H=heard.split(/\s+/).filter(Boolean);
-  const calc=(Ev,pre)=>{const {res,extra}=align(Ev,H),full=[...Array(pre).fill('ok'),...res];
-    const pts=full.reduce((t,x)=>t+(x==='ok'?1:x==='cl'?.5:0),0);return{res:full,extra,score:Math.round(pts/E.length*100)}};
+  const calc=(Ev,pre)=>bestAlign(Ev,H,pre);
   let best=calc(E,0);
   if(skip>0&&E.length>skip){const r=calc(E.slice(skip),skip);if(r.score>best.score)best=r}
   return{...best,E,heard};
